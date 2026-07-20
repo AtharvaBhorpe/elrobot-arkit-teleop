@@ -1,0 +1,242 @@
+# ARKit Phone Teleoperation of the Elrobot Arm — Design
+
+**Date:** 2026-07-20
+**Status:** Approved design, pending implementation plan
+
+## Goal
+
+Teleoperate a physical 7-DOF + gripper Elrobot arm from an iPhone running ZIG SIM PRO.
+Phone pose (ARKit) drives the end-effector through Pinocchio servo-IK; screen touches
+provide clutch and gripper control.
+
+This ports the architecture of the existing
+[franka-isaac-arkit-teleop](https://github.com/AtharvaBhorpe/franka-isaac-arkit-teleop)
+project from Isaac Sim to real hardware. The receiver and IK layers carry over nearly
+unchanged; all new work sits below the joint-command boundary.
+
+## Hardware context
+
+| | |
+|---|---|
+| Arm | Elrobot, 7 revolute joints (`rev_motor_01..07`) + gripper (`rev_motor_08`) |
+| Gripper | one servo driving two prismatic jaws as URDF `<mimic>` joints |
+| Servos | Feetech STS3215, 4096 ticks/rev, ~2.94 N·m stall |
+| Bus | single half-duplex serial via CH343 USB adapter (`1a86:55d3`) |
+| URDF | extracted from the NormaCore `station` binary; 18 joints, 19 links |
+
+### Why not NormaCore station
+
+Station is the vendor platform that ships with the arm. It is not used as the control
+path, for two evidenced reasons:
+
+1. **Throughput.** Station reads motors individually at a measured 20–21 ms per
+   transaction (1786 samples, evenly spread across all 8 motors). Eight sequential
+   reads ≈ 160 ms ≈ 6 Hz — far below what an IK servo loop needs.
+2. **A driver defect.** After a read times out, station does not drain the RX buffer,
+   so the next motor's transaction consumes the stale reply. Observed cascade:
+   `motor 1: Timeout` → `motor 3: expected 3, got 1` → `motor 6: expected 6, got 3`.
+   This silently corrupts calibration by leaving motors half-reset.
+
+LeRobot's `FeetechMotorsBus` is used instead: it offers `sync_read`/`sync_write`
+(all motors in one transaction) and performs its own RX handling.
+
+## Architecture
+
+Three ROS 2 nodes over localhost DDS. Only `elrobot_driver` is new.
+
+```
+iPhone ──UDP/JSON──▶ arkit_receiver ──/target_pose──▶ ik ──/joint_command──▶ elrobot_driver ──serial──▶ arm
+                                                       ▲                          │
+                                                       └──────/joint_states───────┘
+```
+
+All ARKit-specific logic stays inside `arkit_receiver`; everything downstream is
+input-agnostic, so the phone can later be swapped for another pose source without
+touching the control path.
+
+### `arkit_receiver`
+
+Ports from the Franka project unchanged. Listens on a UDP socket, parses ZIG SIM JSON,
+emits a pose target per received packet (event-driven, not polled).
+
+ZIG SIM payload fields:
+
+| Field | Type |
+|---|---|
+| `sensordata.arkit.position` | `[x, y, z]` metres |
+| `sensordata.arkit.rotation` | `[x, y, z, w]` quaternion |
+| `touch` | int count (0, 1, 2) |
+
+ZIG SIM supports 1/10/30/60 FPS; the Franka project ran at ~10 Hz.
+
+### `ik`
+
+Ports from the Franka project with the URDF and TCP frame swapped. Damped least-squares
+Cartesian servo:
+
+```
+Δq = Jᵀ (J Jᵀ + λ² I)⁻¹ e
+```
+
+with singularity-adaptive λ, joint-velocity clamping, and joint-limit clamping from the
+URDF. Runs over `rev_motor_01..07` only. TCP frame is defined on `Gripper_Base_v1_1`.
+
+`rev_motor_08` is excluded from IK and driven directly by the gripper toggle. The two
+prismatic jaws are mechanically coupled and are never commanded.
+
+### `elrobot_driver` (new)
+
+The only component touching hardware. Therefore all safety lives here.
+
+- Subscribes `/joint_command`, converts 7 joint angles + 1 gripper state to servo ticks
+- `sync_write`s ticks; `sync_read`s state back to `/joint_states`
+- Enforces velocity clamp, workspace bounds, manipulability floor, gripper current limit
+- Freezes on packet-loss deadman
+
+## Interaction model
+
+| Gesture | Effect |
+|---|---|
+| 1 finger held | Clutch engaged. Reference pose re-zeroed on engage; phone motion drives the TCP. |
+| Release | Motion freezes immediately. |
+| 2-finger tap | Toggles gripper open/closed. Latched — persists until next toggle. |
+| No packet for 200 ms | Deadman: freeze in place. |
+
+The 200 ms deadman is a default, not a tuned value: at ZIG SIM's 10 Hz stream rate it
+tolerates one dropped packet and fires on the second. Retune if the stream rate changes.
+
+Hold-to-move was chosen over a latched clutch because on real hardware "release = stop"
+is the safest available failure mode. The latched gripper composes correctly with it:
+tap to grip, then move with one finger while carrying the object.
+
+## Coordinate frames
+
+Axis remap from the Franka project (`ARKIT_TO_ROS`):
+
+- device +Y → robot +Z
+- device −Z → robot +X
+- device −X → robot +Y
+
+Orientation is applied relative to the clutch-engagement pose and remapped to the base
+frame as `C · (R_now · R_refᵀ) · Cᵀ`.
+
+**Motion scale must be retuned.** The Elrobot's reach is 0.424 m against the Franka's
+~0.85 m, so the Franka project's scaling does not port. Default to **0.4** (40 cm of
+phone travel maps to 16 cm of TCP travel), exposed as config and tuned in M4.
+
+## Calibration
+
+Two distinct steps. LeRobot's calibration alone is **not sufficient** for IK.
+
+### M1a — LeRobot motor calibration
+
+Standard `FeetechMotorsBus` procedure: torque off → `set_half_turn_homings()` →
+`record_ranges_of_motion()` → writes homing offsets to servo EEPROM plus a JSON.
+
+Joints 5 and 7 have near-full-revolution ranges (336° and 340°) and will likely need
+LeRobot's `full_turn_motors` treatment rather than swept-range recording — the same
+special-casing the SO-101 applies to `shoulder_pan` and `wrist_roll`.
+
+Calibration is interactive and hand-paced, so it is insensitive to bus latency.
+
+### M1b — URDF ↔ tick reconciliation
+
+LeRobot places joint zero at the **midpoint of the recorded range**. The URDF's zero is
+the CAD neutral pose. These do not coincide, and nothing reconciles them automatically.
+Feeding IK output straight to LeRobot-normalized commands yields a smooth, confident
+move to the wrong pose.
+
+Scale is fixed — STS3215 is direct-drive at 4096 ticks/rev = **651.9 ticks/rad** — so
+only a per-joint offset and sign are needed:
+
+```
+ticks_i = offset_i + sign_i * 651.9 * q_urdf_i
+```
+
+Procedure, once:
+
+1. Place the arm in the **URDF neutral pose** (`pin.neutral(model)`, all joints at 0),
+   matched physically against the model rendered in the viewer. Read ticks on each
+   joint → `offset_i`.
+2. Move each joint in its **+URDF** direction; if ticks decrease, `sign_i = -1`.
+
+Reproducibility matters more than accuracy here: any consistently identifiable pose
+works, provided the same pose is used when re-deriving the table after a recalibration.
+
+The gripper needs no URDF correspondence — record ticks at fully-open and fully-closed
+(with a current limit) and map the toggle to those two values.
+
+**Verification gate:** command a known joint vector, read back, run Pinocchio FK, and
+compare predicted TCP against the arm's actual pose in the URDF viewer. This catches a
+sign error before the arm swings into the table.
+
+## Verified findings
+
+Established by execution against the extracted URDF (Pinocchio 4.1.0), not assumed.
+
+| Finding | Value | Consequence |
+|---|---|---|
+| URDF loads without meshes | `nq=10, nv=10` | kinematics-only build is sufficient |
+| **Pinocchio ignores `<mimic>`** | both jaws are independent DOFs | driver **must index q by joint name**, never 1:1 to motors |
+| Arm Jacobian | 6×7, rank 6 in 100% of 4000 poses | full 6-DOF control, 1 redundant DOF |
+| Workspace | 0.628 × 0.621 × 0.540 m | — |
+| Max reach | 0.424 m | motion scale must drop to ~0.4 |
+| Near-singular volume | 13.9% at σ_min < 0.01 | adaptive damping is load-bearing; add manipulability floor |
+| Worst gravity torque | 0.973 N·m on `rev_motor_02` = 33.1% of stall | arm holds its own poses; 0 of 4000 poses exceed stall |
+| Model mass | 0.515 kg | light for 8 servos — treat torque margin as ~2× derated |
+
+Joint limits (rad), from the URDF:
+
+```
+rev_motor_01  [-1.5509, +1.5509]
+rev_motor_02  [-1.6122, +1.6122]
+rev_motor_03  [-1.7610, +1.7610]
+rev_motor_04  [-1.7533, +1.7533]
+rev_motor_05  [-2.6200, +3.2520]
+rev_motor_06  [-1.3775, +1.7641]
+rev_motor_07  [-3.2014, +2.7336]
+```
+
+## Safety requirements
+
+Non-negotiable, all enforced in `elrobot_driver`:
+
+- **Velocity clamp** per joint on every command
+- **Workspace bounding box** — targets outside it rejected before IK runs
+- **Manipulability floor** — refuse or heavily damp when σ_min falls below threshold
+- **Gripper current limit** — motor 8 has already latched an Overload (`status=0x20`)
+  from being commanded past its mechanical stop
+- **Deadman freeze** on packet loss or clutch release
+
+In simulation a bad IK solve is a visual glitch. Here it is a collision.
+
+## Risks and open questions
+
+| Risk | Status |
+|---|---|
+| Bus rate under LeRobot `sync_read` | **unmeasured** — hardware currently unplugged. Gates the whole project. |
+| Does `FeetechMotorsBus.connect()` require calibration to read? | **unconfirmed.** If yes, M0 depends on M1 and they are not parallel. |
+| RoboStack ROS 2 Jazzy + lerobot in one env | **unproven.** Test in a throwaway env before committing. |
+| URDF inertias understated | likely; derate torque margin ~2× |
+| Motor 8 mechanical state | overload was commanded-past-stop, not gravity; confirm jaws move freely by hand |
+
+## Milestones
+
+| | Milestone | Gate |
+|---|---|---|
+| M0 | Bus probe — `sync_read`/`sync_write` rate, desync check | p50 < 5 ms → proceed; ~20 ms → fix USB transport first |
+| M1a | LeRobot calibration | all 8 motors calibrated, ranges sane |
+| M1b | URDF↔tick offset/sign table | FK agreement with physical pose |
+| M2 | Receiver + IK + viewer, no hardware | phone drives the model in a viewer |
+| M3 | Driver node, position-only, hard velocity clamp | arm tracks phone safely |
+| M4 | Full 6-DOF pose + gripper | pick-and-place |
+| M5 | Safety hardening and tuning | all safety rules enforced and tested |
+
+M2 carries zero hardware risk and validates the entire upper pipeline — the role Isaac
+played in the Franka project.
+
+## Out of scope
+
+Deliberately excluded from this design: imitation-learning data collection, Rerun
+recording, VLA policy integration, and any NormaCore station interoperability. Those
+are later phases and none of them change the decisions above.
