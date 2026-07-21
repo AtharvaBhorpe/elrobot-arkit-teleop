@@ -15,6 +15,8 @@ ros-jazzy-rviz2 = "*"
 ros-jazzy-robot-state-publisher = "*"
 ros-jazzy-joint-state-publisher-gui = "*"
 ros-jazzy-xacro = "*"
+# mcap recording for ros2 bag
+ros-jazzy-rosbag2-storage-mcap = "*"
 # Kinematics-only Pinocchio for the IK layer (spec: nq=10, meshes not required)
 pinocchio = "*"
 # build/dev basics
@@ -28,7 +30,7 @@ numpy = ">=2.0,<2.3"
 # PyPI lerobot==0.1.0 is a stale placeholder with NO motors/feetech code.
 # The maintained bus (FeetechMotorsBus, sync_read/sync_write) lives only on git.
 # The `feetech` extra pulls feetech-servo-sdk itself.
-lerobot = { git = "https://github.com/huggingface/lerobot.git", extras = ["feetech"] }
+lerobot = { git = "https://github.com/huggingface/lerobot.git", extras = ["feetech", "dataset"] }
 
 [tasks]
 # prove-env: the M0/M2 prerequisite gate — all four stacks import in one process
@@ -42,3 +44,9 @@ m3-arm = "python scripts/make_viz_urdf.py && ros2 launch scripts/m3.launch.py"
 # jog: sliders drive the REAL arm through the driver; sliders seed from the
 # arm's current pose (falls back to zero/neutral if the pre-launch read fails)
 jog = "python scripts/make_viz_urdf.py && ros2 launch scripts/jog.launch.py"
+# cams: wrist + external camera nodes (WRIST_DEV / EXT_DEV env to pick devices)
+cams = "ros2 launch scripts/cams.launch.py"
+# record: episode recorder -> LeRobotDataset (own terminal; ENTER starts/stops)
+record = "python scripts/episode_recorder.py"
+# bag: everything -> mcap rosbag under data/bags/ (Ctrl-C to stop)
+bag = "ros2 bag record -s mcap -o data/bags/$(date +%Y%m%d_%H%M%S) /joint_states /joint_command /target_pose /gripper_command /wrist_cam/image /ext_cam/image /tf /tf_static"

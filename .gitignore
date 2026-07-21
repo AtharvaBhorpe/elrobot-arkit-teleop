@@ -2,3 +2,4 @@
 __pycache__/
 *.pyc
 docs/urdf_Elrobot_viz.urdf
+data/
