@@ -350,7 +350,7 @@ def build_args(argv=None):
     # is capped by Torque_Limit at ~300. (Present_Current is useless on this
     # firmware: max 2 LSB during the same move.)
     p.add_argument("--grip-load-thresh", dest="grip_load_thresh", type=int,
-                   default=150,
+                   default=250,
                    help="grasp contact threshold, |Present_Load| LSB "
                         "(0.1%% duty each). Tune with watch_ticks' load column.")
     p.add_argument("--grip-squeeze", type=int, default=40,

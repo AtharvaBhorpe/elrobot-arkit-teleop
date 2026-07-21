@@ -190,7 +190,7 @@ def main():
     # MOVING jaw under high load = acceleration transient, NOT contact
     # (field-observed: fast slider drags cost ~17% load in free air and
     # false-latched). High load only counts when the jaw has stopped.
-    d.bus.load[GRIPPER_JOINT] = -200
+    d.bus.load[GRIPPER_JOINT] = -280
     for _ in range(30):
         d.bus.present[GRIPPER_JOINT] += d.close_dir * 10   # still moving
         d.last_present[GRIPPER_JOINT] = d.bus.present[GRIPPER_JOINT]
