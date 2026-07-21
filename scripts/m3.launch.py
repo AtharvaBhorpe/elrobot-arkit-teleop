@@ -18,6 +18,27 @@ from launch_ros.actions import Node
 HERE = Path(__file__).resolve().parent
 URDF = (HERE.parent / "docs" / "urdf_Elrobot_viz.urdf").read_text()
 
+# Tuning knobs, passed as environment variables:
+#   ORIENT=0            position-only (phone rotation ignored; often calmer)
+#   SCALE=0.4           phone->TCP translation gain          (receiver)
+#   SMOOTH=0.35         target EMA alpha, 1=off              (ik)
+#   MAX_VEL=0.6         per-joint velocity clamp, rad/s      (driver)
+#   ACCEL=40            servo acceleration register          (driver)
+#   GRIP_SQUEEZE=40     ticks of squeeze past grasp contact  (driver)
+#   GRIP_LOAD_THRESH=150  grasp load threshold, 0.1%/LSB     (driver)
+# e.g.:  SCALE=0.3 ORIENT=0 pixi run m3-arm
+
+
+def _env_args(mapping):
+    return [tok for env, flag in mapping
+            if (v := os.environ.get(env)) is not None for tok in (flag, v)]
+
+
+DRIVER_ENV = [("MAX_VEL", "--max-vel"), ("ACCEL", "--accel"),
+              ("GRIP_SQUEEZE", "--grip-squeeze"),
+              ("GRIP_LOAD_THRESH", "--grip-load-thresh"),
+              ("Z_MIN", "--z-min"), ("R_MAX", "--r-max")]
+
 
 def generate_launch_description():
     return LaunchDescription([
@@ -25,14 +46,15 @@ def generate_launch_description():
              parameters=[{"robot_description": URDF}]),
         Node(package="rviz2", executable="rviz2",
              arguments=["-d", str(HERE / "view.rviz")]),
-        ExecuteProcess(cmd=[sys.executable, str(HERE / "elrobot_driver.py")],
+        ExecuteProcess(cmd=[sys.executable, str(HERE / "elrobot_driver.py")]
+                       + _env_args(DRIVER_ENV),
                        output="screen"),
         ExecuteProcess(cmd=[sys.executable, str(HERE / "ik_node.py"),
-                            "--no-sim-state"], output="screen"),
-        # ORIENT=0 pixi run m3-arm -> position-only mode: TCP orientation
-        # frozen at clutch engage, phone rotation ignored. Often feels far
-        # more controlled; the Franka project's v1 shipped this way.
+                            "--no-sim-state"]
+                       + _env_args([("SMOOTH", "--smooth")]),
+                       output="screen"),
         ExecuteProcess(cmd=[sys.executable, str(HERE / "arkit_receiver.py")]
+                       + _env_args([("SCALE", "--scale")])
                        + ([] if os.environ.get("ORIENT", "1") != "0"
                           else ["--no-orient"]),
                        output="screen"),
