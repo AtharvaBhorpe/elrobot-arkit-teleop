@@ -39,3 +39,6 @@ view = "python scripts/make_viz_urdf.py && ros2 launch scripts/view.launch.py"
 m2 = "python scripts/make_viz_urdf.py && ros2 launch scripts/m2.launch.py"
 # m3-arm: phone drives the REAL arm (driver + ik --no-sim-state + receiver)
 m3-arm = "python scripts/make_viz_urdf.py && ros2 launch scripts/m3.launch.py"
+# jog: sliders drive the REAL arm through the driver (WARNING: moves to
+# neutral on GUI start - sliders initialize at zero)
+jog = "python scripts/make_viz_urdf.py && ros2 launch scripts/jog.launch.py"
