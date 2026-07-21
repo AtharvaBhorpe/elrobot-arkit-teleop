@@ -142,28 +142,88 @@ def add_camera(root):
                 "camera_optical_frame", CAM_OPTICAL_XYZ, rpy)
 
 
+REBASED = Path("data/viz_meshes")  # derived, gitignored, regenerated
+
+
+def rebase_meshes(root):
+    """Bake visual origin + scale INTO the mesh vertices, per link.
+
+    The vendor meshes are CAD-world millimeters with a compensating visual
+    origin per link. rviz composes frame . origin . scale(mesh) correctly;
+    Foxglove's URDF layer does not (links render exploded at their CAD-world
+    offsets). Rewriting each mesh into its link-local frame in meters -
+    identity origin, scale 1 - is the conventional pattern every renderer
+    agrees on. Collision elements are stripped: this is a display model.
+    """
+    import struct
+
+    import numpy as np
+    import pinocchio as pin
+
+    REBASED.mkdir(parents=True, exist_ok=True)
+    n = 0
+    for link in root.findall("link"):
+        for col in link.findall("collision"):
+            link.remove(col)
+        v = link.find("visual")
+        if v is None:
+            continue
+        mesh = v.find("geometry/mesh")
+        if mesh is None:
+            continue
+        o = v.find("origin")
+        xyz = np.array([float(x) for x in
+                        ((o.get("xyz") if o is not None else None) or "0 0 0").split()])
+        rpy = [float(x) for x in
+               ((o.get("rpy") if o is not None else None) or "0 0 0").split()]
+        R = (pin.utils.rotate("z", rpy[2]) @ pin.utils.rotate("y", rpy[1])
+             @ pin.utils.rotate("x", rpy[0]))
+        scale = float((mesh.get("scale") or "0.001").split()[0])
+        src = ASSETS / Path(mesh.get("filename")).name
+        dst = REBASED / src.name
+        if not dst.exists() or dst.stat().st_mtime < src.stat().st_mtime:
+            with open(src, "rb") as f:
+                header = f.read(80)
+                cnt = struct.unpack("<I", f.read(4))[0]
+                raw = np.frombuffer(f.read(cnt * 50), dtype=np.uint8
+                                    ).reshape(cnt, 50).copy()
+            tris = raw[:, 12:48].copy().view("<f4").reshape(-1, 3)
+            tris_new = (tris * scale) @ R.T + xyz          # link-local meters
+            nrm = raw[:, 0:12].copy().view("<f4").reshape(-1, 3)
+            nrm_new = nrm @ R.T
+            raw[:, 12:48] = np.ascontiguousarray(
+                tris_new.astype("<f4").reshape(cnt, 9)).view(np.uint8)
+            raw[:, 0:12] = np.ascontiguousarray(
+                nrm_new.astype("<f4").reshape(cnt, 3)).view(np.uint8)
+            with open(dst, "wb") as f:
+                f.write(header)
+                f.write(struct.pack("<I", cnt))
+                f.write(raw.tobytes())
+        mesh.set("filename", dst.resolve().as_uri())
+        if mesh.get("scale"):
+            del mesh.attrib["scale"]
+        if o is not None:
+            o.set("xyz", "0 0 0")
+            o.set("rpy", "0 0 0")
+        n += 1
+    return n
+
+
 def main():
     tree = ET.parse(SRC)
     root = tree.getroot()
     fix_jaw_frames(root)
     add_camera(root)
 
-    missing = []
-    n_mesh = 0
-    for link in root.findall("link"):
-        for mesh in link.iter("mesh"):
-            fname = Path(mesh.get("filename")).name
-            path = ASSETS / fname
-            if not path.exists():
-                missing.append(fname)
-            mesh.set("filename", path.as_uri())
-            n_mesh += 1
-
+    missing = [Path(m.get("filename")).name for link in root.findall("link")
+               for m in link.iter("mesh")
+               if not (ASSETS / Path(m.get("filename")).name).exists()]
     if missing:
         raise SystemExit(f"missing meshes in {ASSETS}: {missing}")
 
+    n_mesh = rebase_meshes(root)
     tree.write(DST)
-    print(f"wrote {DST} ({n_mesh} meshes -> {ASSETS})")
+    print(f"wrote {DST} ({n_mesh} link-local meshes -> {REBASED})")
 
 
 if __name__ == "__main__":
