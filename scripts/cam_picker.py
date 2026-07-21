@@ -31,7 +31,9 @@ class Picker:
         # the combobox's DROP-DOWN LIST styles its font separately
         self.root.option_add("*TCombobox*Listbox.font", ui_font)
         style = ttk.Style()
-        style.configure("TCombobox", padding=round(6 * s))
+        style.theme_use("clam")  # default theme ignores arrowsize
+        style.configure("TCombobox", padding=round(6 * s),
+                        arrowsize=round(18 * s))
 
         devs = sorted(glob.glob("/dev/video*"))
         self.combo = ttk.Combobox(self.root, values=devs, state="readonly",
