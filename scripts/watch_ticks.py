@@ -37,15 +37,16 @@ def main():
     bus.connect(handshake=True)
     bus.disable_torque()
     print("torque DISABLED - joints move by hand. Ctrl-C to quit.\n")
-    print(f"{'JOINT':<14}{'TICKS':>7}{'q(rad)':>9}{'q(deg)':>9}{'mA':>7}")
+    # Load = signed motor effort, 0.1%/LSB (Present_Current is ~0 on this
+    # firmware even in motion - measured; load is the usable signal)
+    print(f"{'JOINT':<14}{'TICKS':>7}{'q(rad)':>9}{'q(deg)':>9}{'load%':>7}")
     try:
         first = True
         while True:
             names = ARM + ["rev_motor_08"]
             ticks = bus.sync_read("Present_Position", names, normalize=False)
-            cur = bus.sync_read("Present_Current", names, normalize=False)
-            # Feetech sign-magnitude (bit 15); ~6.5 mA/LSB
-            ma = {n: (v & 0x7FFF) * 6.5 for n, v in cur.items()}
+            load = bus.sync_read("Present_Load", names, normalize=False)
+            ma = {n: v / 10 for n, v in load.items()}  # signed percent
             if not first:
                 print(f"\x1b[{len(ticks)}A", end="")  # cursor up, overwrite
             first = False

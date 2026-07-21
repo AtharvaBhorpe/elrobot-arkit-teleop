@@ -28,12 +28,12 @@ from elrobot_driver import (  # noqa: E402
 class StubBus:
     def __init__(self, present):
         self.present = dict(present)
-        self.current = {n: 0 for n in present}  # Present_Current raw LSB
+        self.load = {n: 0 for n in present}  # Present_Load raw LSB (signed)
         self.calls = []
 
     def sync_read(self, reg, motors=None, normalize=True, num_retry=0):
         self.calls.append(("sync_read", reg))
-        src = self.current if reg == "Present_Current" else self.present
+        src = self.load if reg == "Present_Load" else self.present
         return {n: src[n] for n in (motors or src)}
 
     def sync_write(self, reg, values, normalize=True, num_retry=0):
@@ -173,37 +173,39 @@ def main():
     assert moved  # silence the linter: we did move first
     print("8. deadman freeze + latch OK")
 
-    # 9) grasp: closing + sustained current spike -> latch at contact +
-    #    squeeze; deeper-close commands ignored; open command releases.
+    # 9) grasp: goal pushing past the PHYSICAL position + sustained load ->
+    #    latch at physical contact + squeeze; deeper-close commands ignored;
+    #    open command releases. The stub's physical position never moves,
+    #    which models a fully stalled jaw (the case the old slew-based
+    #    window missed entirely).
     d = make_driver(present)
     g_open = conv.grip_ticks(0.0)
     d.bus.present[GRIPPER_JOINT] = g_open
+    d.last_present[GRIPPER_JOINT] = g_open
     d.slew_pos[GRIPPER_JOINT] = float(g_open)
     d._on_cmd(cmd({n: 0.0 for n in ARM_JOINTS}, grip=GRIPPER_CLOSED))
-    for _ in range(30):    # closing, no contact yet
+    for _ in range(30):    # pushing, but NO load: must not latch
         d._tick()
-    assert d.grasp_goal is None
-    contact_pos = d.slew_pos[GRIPPER_JOINT]
-    d.bus.current[GRIPPER_JOINT] = 200          # jaws hit something
+    assert d.grasp_goal is None, "must not latch without load"
+    d.bus.load[GRIPPER_JOINT] = -200            # jaws stalled on something
     for _ in range(5):
         d._on_cmd(cmd({n: 0.0 for n in ARM_JOINTS}, grip=GRIPPER_CLOSED))
         d._tick()
     assert d.grasp_goal is not None, "grasp not detected"
-    expect = contact_pos + d.close_dir * d.grip_squeeze
-    assert abs(d.grasp_goal - expect) < d.max_step[GRIPPER_JOINT] * 5 + 1, \
-        (d.grasp_goal, expect)
+    expect = g_open + d.close_dir * d.grip_squeeze
+    assert d.grasp_goal == expect, (d.grasp_goal, expect)
     latched = d.grasp_goal
     for _ in range(200):   # keep commanding fully closed: latch must hold
         d._on_cmd(cmd({n: 0.0 for n in ARM_JOINTS}, grip=GRIPPER_CLOSED))
         d._tick()
     assert d.grasp_goal == latched
-    goal_now = d.last_sent[GRIPPER_JOINT]
-    assert abs(goal_now - latched) <= 1, "goal must stop at the latch"
+    assert abs(d.last_sent[GRIPPER_JOINT] - latched) <= 1, \
+        "goal must stop at the latch"
     d._on_cmd(cmd({n: 0.0 for n in ARM_JOINTS}, grip=0.0))  # open
     d._tick()
     assert d.grasp_goal is None, "open command must release the grasp"
-    print(f"9. grasp detect/hold/release OK (latched {latched}, "
-          f"{abs(latched - contact_pos):.0f} ticks of squeeze)")
+    print(f"9. grasp detect/hold/release OK (stalled jaw, signed load, "
+          f"latched at contact{d.close_dir * d.grip_squeeze:+d})")
 
     print("\nALL DRIVER SAFETY TESTS PASSED")
     rclpy.try_shutdown()
