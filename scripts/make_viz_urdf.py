@@ -28,9 +28,64 @@ DST = Path("docs/urdf_Elrobot_viz.urdf")
 ASSETS = Path("docs/assets").resolve()
 
 
+def _stl_center_m(path):
+    """Bbox center of a binary STL, mm -> m (vertices are CAD-world mm)."""
+    import struct
+
+    import numpy as np
+    with open(path, "rb") as f:
+        f.seek(80)
+        n = struct.unpack("<I", f.read(4))[0]
+        vs = np.frombuffer(f.read(n * 50), dtype=np.uint8).reshape(n, 50)[
+            :, 12:48].copy().view("<f4").reshape(-1, 3)
+    return (vs.min(0) + vs.max(0)) / 2 / 1000.0
+
+
+def fix_jaw_frames(root):
+    """Move the jaw LINK FRAMES onto the jaws; keep the pixels identical.
+
+    The vendor's jaw joint origins are CAD-world coords (frame ~38 cm off)
+    with visual origins compensating exactly. Rendering composes
+    frame . visual, which is invariant under: origin += delta,
+    visual -= delta. Delta is chosen to put each frame at its jaw's mesh
+    center expressed in the gripper-base frame, so TF lands ON the jaw and
+    slides with it. Rotations are all identity here, so it is pure vector
+    arithmetic.
+    """
+    import numpy as np
+    import pinocchio as pin
+
+    m = pin.buildModelFromUrdf(str(SRC))
+    d = m.createData()
+    pin.forwardKinematics(m, d, pin.neutral(m))
+    pin.updateFramePlacements(m, d)
+    Tgb = d.oMf[m.getFrameId("Gripper_Base_v1_1")]
+
+    links = {l.get("name"): l for l in root.findall("link")}
+    for j in root.findall("joint"):
+        if j.get("name") not in ("rev_motor_08_1", "rev_motor_08_2"):
+            continue
+        link = links[j.find("child").get("link")]
+        mesh_file = ASSETS / Path(
+            link.find("visual/geometry/mesh").get("filename")).name
+        c_world = _stl_center_m(mesh_file)
+        o = j.find("origin")
+        old = np.array([float(x) for x in o.get("xyz").split()])
+        new = Tgb.rotation.T @ (c_world - Tgb.translation)
+        o.set("xyz", " ".join(f"{v:.6f}" for v in new))
+        delta = old - new  # what the frame moved by; visuals move back
+        for tag in ("visual", "collision"):
+            el = link.find(f"{tag}/origin")
+            if el is None:
+                continue
+            vx = np.array([float(x) for x in el.get("xyz").split()])
+            el.set("xyz", " ".join(f"{v:.6f}" for v in vx + delta))
+
+
 def main():
     tree = ET.parse(SRC)
     root = tree.getroot()
+    fix_jaw_frames(root)
 
     missing = []
     n_mesh = 0
