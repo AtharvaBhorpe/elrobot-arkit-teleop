@@ -145,6 +145,61 @@ def add_camera(root):
 REBASED = Path("data/viz_meshes")  # derived, gitignored, regenerated
 
 
+def _write_dae(dst, tris):
+    """Minimal COLLADA with explicit Z_UP, meters, indexed vertices.
+
+    tris: (T, 3, 3) float array, link-local meters. Normals are recomputed
+    from the geometry (vendor STL normals are unreliable). Vertices are
+    deduplicated so the XML stays a fraction of the raw triangle soup.
+    """
+    import numpy as np
+
+    corners = tris.reshape(-1, 3)
+    verts, inverse = np.unique(corners.round(7), axis=0, return_inverse=True)
+    v0, v1, v2 = tris[:, 0], tris[:, 1], tris[:, 2]
+    n = np.cross(v1 - v0, v2 - v0)
+    ln = np.linalg.norm(n, axis=1, keepdims=True)
+    n = np.divide(n, ln, out=np.zeros_like(n), where=ln > 1e-12)
+    T = len(tris)
+    # index stream: [vertex_idx, normal_idx] per corner; normal = face index
+    idx = np.empty(T * 6, dtype=np.int64)
+    idx[0::2] = inverse
+    idx[1::2] = np.repeat(np.arange(T), 3)
+
+    def arr(a):
+        return " ".join(f"{x:.7g}" for x in np.asarray(a).ravel())
+
+    dst.write_text(f"""<?xml version="1.0" encoding="utf-8"?>
+<COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
+  <asset><unit name="meter" meter="1"/><up_axis>Z_UP</up_axis></asset>
+  <library_geometries><geometry id="g"><mesh>
+    <source id="pos">
+      <float_array id="pa" count="{len(verts) * 3}">{arr(verts)}</float_array>
+      <technique_common><accessor source="#pa" count="{len(verts)}" stride="3">
+        <param name="X" type="float"/><param name="Y" type="float"/>
+        <param name="Z" type="float"/></accessor></technique_common>
+    </source>
+    <source id="nor">
+      <float_array id="na" count="{T * 3}">{arr(n)}</float_array>
+      <technique_common><accessor source="#na" count="{T}" stride="3">
+        <param name="X" type="float"/><param name="Y" type="float"/>
+        <param name="Z" type="float"/></accessor></technique_common>
+    </source>
+    <vertices id="v"><input semantic="POSITION" source="#pos"/></vertices>
+    <triangles count="{T}">
+      <input semantic="VERTEX" source="#v" offset="0"/>
+      <input semantic="NORMAL" source="#nor" offset="1"/>
+      <p>{" ".join(map(str, idx))}</p>
+    </triangles>
+  </mesh></geometry></library_geometries>
+  <library_visual_scenes><visual_scene id="s">
+    <node id="n"><instance_geometry url="#g"/></node>
+  </visual_scene></library_visual_scenes>
+  <scene><instance_visual_scene url="#s"/></scene>
+</COLLADA>
+""")
+
+
 def rebase_meshes(root):
     """Bake visual origin + scale INTO the mesh vertices, per link.
 
@@ -180,25 +235,20 @@ def rebase_meshes(root):
              @ pin.utils.rotate("x", rpy[0]))
         scale = float((mesh.get("scale") or "0.001").split()[0])
         src = ASSETS / Path(mesh.get("filename")).name
-        dst = REBASED / src.name
+        # COLLADA, not STL: STL has no up-axis metadata, and Foxglove's
+        # (three.js, Y-up) loader orients STLs differently from rviz -
+        # meshes rendered detached/rotated from their correctly-posed
+        # frames. DAE declares Z_UP explicitly; both renderers honor it.
+        dst = REBASED / (src.stem + ".dae")
         if not dst.exists() or dst.stat().st_mtime < src.stat().st_mtime:
             with open(src, "rb") as f:
-                header = f.read(80)
+                f.seek(80)
                 cnt = struct.unpack("<I", f.read(4))[0]
                 raw = np.frombuffer(f.read(cnt * 50), dtype=np.uint8
-                                    ).reshape(cnt, 50).copy()
+                                    ).reshape(cnt, 50)
             tris = raw[:, 12:48].copy().view("<f4").reshape(-1, 3)
-            tris_new = (tris * scale) @ R.T + xyz          # link-local meters
-            nrm = raw[:, 0:12].copy().view("<f4").reshape(-1, 3)
-            nrm_new = nrm @ R.T
-            raw[:, 12:48] = np.ascontiguousarray(
-                tris_new.astype("<f4").reshape(cnt, 9)).view(np.uint8)
-            raw[:, 0:12] = np.ascontiguousarray(
-                nrm_new.astype("<f4").reshape(cnt, 3)).view(np.uint8)
-            with open(dst, "wb") as f:
-                f.write(header)
-                f.write(struct.pack("<I", cnt))
-                f.write(raw.tobytes())
+            verts = (tris.astype(np.float64) * scale) @ R.T + xyz  # link, m
+            _write_dae(dst, verts.reshape(-1, 3, 3))
         mesh.set("filename", dst.resolve().as_uri())
         if mesh.get("scale"):
             del mesh.attrib["scale"]
