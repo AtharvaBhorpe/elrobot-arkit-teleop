@@ -101,7 +101,32 @@ class ARKitReceiver(Node):
         if (self.moving and self._last_rx is not None
                 and time.monotonic() - self._last_rx > DEADMAN_S):
             self.moving = False
+            self._publish_stop()
             self.get_logger().warning("stream deadman: clutch released")
+
+    def _publish_stop(self):
+        """Release = freeze IMMEDIATELY: final target := current robot pose.
+
+        Without this the ik node kept chasing the last clutched target for
+        seconds after release. Its 0.3 s stream timeout remains the backstop.
+        """
+        if self._latest_q is None:
+            return
+        self.fk.set_q(self._latest_q)
+        self._publish_pose(self.fk.ee_pose())
+
+    def _publish_pose(self, M):
+        quat = pin.Quaternion(M.rotation)
+        msg = PoseStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "base_link"
+        msg.pose.position.x, msg.pose.position.y, msg.pose.position.z = \
+            map(float, M.translation)
+        msg.pose.orientation.w = float(quat.w)
+        msg.pose.orientation.x = float(quat.x)
+        msg.pose.orientation.y = float(quat.y)
+        msg.pose.orientation.z = float(quat.z)
+        self.pose_pub.publish(msg)
 
     def _log_rot_axis(self, d_robot, _state=[0.0]):
         """1 Hz: dominant rotation axis in the base frame, for axis debugging.
@@ -192,7 +217,8 @@ class ARKitReceiver(Node):
                 self.get_logger().info("move engaged")
         elif not moving and self.moving:
             self.moving = False
-            self.get_logger().info("move released")
+            self._publish_stop()
+            self.get_logger().info("move released (stop-here target sent)")
 
         if self.moving and self.robot_ref is not None:
             delta = self.C @ (pos - self.phone_ref) * self.scale
@@ -206,18 +232,7 @@ class ARKitReceiver(Node):
                 self._log_rot_axis(d_robot)
             else:
                 target_R = self.robot_ref.rotation
-            quat = pin.Quaternion(target_R)
-
-            msg = PoseStamped()
-            msg.header.stamp = self.get_clock().now().to_msg()
-            msg.header.frame_id = "base_link"
-            msg.pose.position.x, msg.pose.position.y, msg.pose.position.z = \
-                map(float, target_pos)
-            msg.pose.orientation.w = float(quat.w)
-            msg.pose.orientation.x = float(quat.x)
-            msg.pose.orientation.y = float(quat.y)
-            msg.pose.orientation.z = float(quat.z)
-            self.pose_pub.publish(msg)
+            self._publish_pose(pin.SE3(target_R, target_pos))
 
         self.prev_n = n
 

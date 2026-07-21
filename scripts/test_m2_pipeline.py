@@ -114,6 +114,22 @@ def main():
             abs(probe.gripper - GRIPPER_CLOSED) < 1e-6, probe.gripper
         print("gripper latched closed")
 
+        # 2b) RELEASE = FREEZE IMMEDIATELY (regression: arm kept moving ~3 s
+        # after unclutching). Engage, command a far target, release mid-move:
+        # the TCP must stop within ~0.4 s, not coast to the stale target.
+        send([0.0, 0.25, 0.0], 1)
+        time.sleep(0.1)
+        for _ in range(10):                    # yank the target far away
+            send([0.0, 0.8, 0.0], 1)
+            time.sleep(0.02)
+        send([0.0, 0.8, 0.0], 0)               # 0 fingers: release mid-move
+        time.sleep(0.4)                        # stop-here target + decel
+        p1 = probe.tcp()
+        time.sleep(0.8)
+        drift = np.linalg.norm(probe.tcp() - p1)
+        assert drift < 0.005, f"kept moving {drift*1000:.0f} mm after release"
+        print(f"release mid-move freezes ({drift*1000:.1f} mm residual drift)")
+
         # 3) silence > deadman, then re-engage at a far phone pose: no jump.
         #    (If the deadman failed, the clutch would still be engaged and the
         #    far pose would command a huge move - caught by the same assert.)

@@ -98,22 +98,28 @@ def main():
     assert not any(c[0] == "enable_torque" for c in d.bus.calls)
     print("3. smoke mode (--no-torque) writes no goals OK")
 
-    # 4) slew limiter: far command -> per-cycle steps of exactly max_step
+    # 4) slew limiter: far command -> float steps of max_step, no overshoot
     d = make_driver(present)
     n0 = ARM_JOINTS[0]
     q_t = 1.0  # ~652 ticks away from present (q=0)
     d._on_cmd(cmd({n0: q_t}))
-    before = dict(d.last_sent)
-    d._tick()
-    step = d.last_sent[n0] - before[n0]
-    assert abs(step) == d.max_step[n0], f"step {step} != clamp {d.max_step[n0]}"
-    for _ in range(3000):
+    prev = dict(d.last_sent)
+    goal_ticks = conv.arm_ticks(n0, q_t)
+    import math
+    for i in range(3000):
         d._on_cmd(cmd({n0: q_t}))  # keep deadman fed
         d._tick()
-        if d.last_sent[n0] == d.target[n0]:
+        step = d.last_sent[n0] - prev[n0]
+        assert abs(step) <= math.ceil(d.max_step[n0]), f"step {step} too big"
+        assert (goal_ticks - d.last_sent[n0]) * (goal_ticks - prev[n0]) >= 0, \
+            "overshot the target"
+        prev = dict(d.last_sent)
+        if d.last_sent[n0] == goal_ticks:
             break
-    assert d.last_sent[n0] == conv.arm_ticks(n0, q_t), "must converge to target"
-    print(f"4. slew limiter OK ({d.max_step[n0]} ticks/cycle, converges)")
+    assert d.last_sent[n0] == goal_ticks, "must converge to target"
+    assert i < 200, f"took {i} cycles - float accumulator not accumulating?"
+    print(f"4. slew limiter OK ({d.max_step[n0]:.1f} ticks/cycle, "
+          f"converged in {i} cycles, no overshoot)")
 
     # 5) joint-limit clamp: command beyond URDF limit is clamped
     d = make_driver(present)

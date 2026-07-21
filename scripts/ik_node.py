@@ -14,6 +14,7 @@ Publishes:
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +36,8 @@ class IKNode(Node):
         self.target: pin.SE3 | None = None
         self.gripper = GRIPPER_OPEN
         self.dt = 1.0 / args.rate
+        self.smooth = args.smooth
+        self.last_target_time = None
 
         self.create_subscription(PoseStamped, "/target_pose", self._on_target, 1)
         self.create_subscription(Float64, "/gripper_command", self._on_gripper, 1)
@@ -66,14 +69,34 @@ class IKNode(Node):
     def _on_target(self, msg: PoseStamped):
         p = msg.pose.position
         o = msg.pose.orientation
-        self.target = pin.SE3(
+        raw = pin.SE3(
             pin.Quaternion(o.w, o.x, o.y, o.z).normalized().matrix(),
             np.array([p.x, p.y, p.z]))
+        # EMA on the target: ARKit pose noise + hand tremor otherwise pass
+        # straight into the servo. alpha=1 disables.
+        a = self.smooth
+        if self.target is None or a >= 1.0:
+            self.target = raw
+        else:
+            t = self.target.translation * (1 - a) + raw.translation * a
+            q0 = pin.Quaternion(self.target.rotation)
+            self.target = pin.SE3(
+                q0.slerp(a, pin.Quaternion(raw.rotation)).matrix(), t)
+        self.last_target_time = time.monotonic()
 
     def _on_gripper(self, msg: Float64):
         self.gripper = msg.data
 
     def _tick(self):
+        # Target-stream timeout: the receiver only publishes while the clutch
+        # is held. Without this, releasing the clutch left the last target
+        # live and the arm kept moving for seconds ("release = freeze" broken).
+        # Backstop only - the receiver also publishes an explicit stop-here
+        # target on release; this catches a crashed/wedged receiver too.
+        if (self.target is not None and self.last_target_time is not None
+                and time.monotonic() - self.last_target_time > 0.3):
+            self.target = None
+            self.get_logger().info("target stream silent: holding")
         if self.target is not None:
             self.ik.servo(self.target, self.dt)
         msg = JointState()
@@ -88,6 +111,8 @@ class IKNode(Node):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--rate", type=float, default=100.0, help="servo rate Hz")
+    p.add_argument("--smooth", type=float, default=0.35,
+                   help="EMA alpha on the target pose (1 = no smoothing)")
     p.add_argument("--no-sim-state", dest="sim_state", action="store_false",
                    help="do not publish /joint_states (M3+: the driver owns it)")
     p.set_defaults(sim_state=True)

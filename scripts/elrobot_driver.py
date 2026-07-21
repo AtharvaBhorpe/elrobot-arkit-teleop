@@ -116,13 +116,15 @@ class ElrobotDriver(Node):
         self.conv = Converter(args.table)
         self.gate = SafetyGate(args.z_min, args.r_max, args.sigma_floor)
         self.dt = 1.0 / args.rate
-        # per-cycle tick step: vel clamp. Gripper gets its own gentler cap.
-        self.max_step = {n: max(1, int(args.max_vel * self.dt * TICKS_PER_RAD))
+        # per-cycle tick step (FLOAT): vel clamp. Kept fractional and
+        # accumulated in slew_pos - integer truncation both staircased the
+        # motion (jitter) and silently ran 23% under the configured velocity.
+        self.max_step = {n: args.max_vel * self.dt * TICKS_PER_RAD
                          for n in ARM_JOINTS}
-        self.max_step[GRIPPER_JOINT] = max(1, int(
+        self.max_step[GRIPPER_JOINT] = (
             args.grip_vel * self.dt * abs(
                 self.conv.t[GRIPPER_JOINT]["closed_ticks"]
-                - self.conv.t[GRIPPER_JOINT]["open_ticks"]) / GRIPPER_CLOSED))
+                - self.conv.t[GRIPPER_JOINT]["open_ticks"]) / GRIPPER_CLOSED)
         self.torque = args.torque
 
         if bus is None:
@@ -138,7 +140,8 @@ class ElrobotDriver(Node):
 
         present = self.bus.sync_read("Present_Position", ALL_JOINTS,
                                      normalize=False)
-        self.last_sent = dict(present)   # slew limiter state
+        self.slew_pos = {n: float(v) for n, v in present.items()}  # float acc
+        self.last_sent = dict(present)   # last INTEGER goal written
         self.target = None               # ticks; None until first command
         self.frozen = False
         self.last_cmd_time = None
@@ -146,6 +149,10 @@ class ElrobotDriver(Node):
         # gripper current limit BEFORE any torque (spec: motor 8 has latched
         # Overload from being driven past its stop)
         self.bus.write("Torque_Limit", GRIPPER_JOINT, args.grip_torque_limit)
+        # acceleration profile: without it every 100 Hz mini-goal is a step
+        # input to a stiff position loop -> audible ticking / jitter
+        for n in ALL_JOINTS:
+            self.bus.write("Acceleration", n, args.accel)
         if self.torque:
             # hold-in-place enable: goal := present, THEN torque on
             self.bus.sync_write("Goal_Position", present, normalize=False)
@@ -222,10 +229,10 @@ class ElrobotDriver(Node):
         if self.target is not None and self.torque:
             out = {}
             for n in ALL_JOINTS:
-                cur = self.last_sent[n]
-                step = int(np.clip(self.target[n] - cur,
-                                   -self.max_step[n], self.max_step[n]))
-                out[n] = cur + step
+                self.slew_pos[n] += float(np.clip(
+                    self.target[n] - self.slew_pos[n],
+                    -self.max_step[n], self.max_step[n]))
+                out[n] = int(round(self.slew_pos[n]))
             if out != self.last_sent:
                 try:
                     self.bus.sync_write("Goal_Position", out, normalize=False)
@@ -261,6 +268,8 @@ def build_args(argv=None):
     p.add_argument("--grip-vel", dest="grip_vel", type=float, default=2.0)
     p.add_argument("--grip-torque-limit", type=int, default=300,
                    help="Torque_Limit register for motor 8 (0-1000)")
+    p.add_argument("--accel", type=int, default=40,
+                   help="Acceleration register, all motors (0=step response)")
     p.add_argument("--z-min", dest="z_min", type=float, default=0.02)
     p.add_argument("--r-max", dest="r_max", type=float, default=0.45)
     # Backstop only: measured sigma_min distribution has NEUTRAL at 0.0011
