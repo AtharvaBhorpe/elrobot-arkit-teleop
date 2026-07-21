@@ -10,6 +10,11 @@ platforms = ["linux-64"]
 # Jazzy targets 3.12 upstream; git lerobot requires >=3.12
 python = "3.12.*"
 ros-jazzy-ros-base = "*"
+# viewer stack for M2: URDF in rviz2 driven by /joint_states
+ros-jazzy-rviz2 = "*"
+ros-jazzy-robot-state-publisher = "*"
+ros-jazzy-joint-state-publisher-gui = "*"
+ros-jazzy-xacro = "*"
 # Kinematics-only Pinocchio for the IK layer (spec: nq=10, meshes not required)
 pinocchio = "*"
 # build/dev basics
@@ -28,3 +33,5 @@ lerobot = { git = "https://github.com/huggingface/lerobot.git", extras = ["feete
 [tasks]
 # prove-env: the M0/M2 prerequisite gate — all four stacks import in one process
 prove-env = "python scripts/prove_env.py"
+# view: stick-figure URDF in rviz2 with joint sliders (regenerates viz URDF first)
+view = "python scripts/make_viz_urdf.py && ros2 launch scripts/view.launch.py"

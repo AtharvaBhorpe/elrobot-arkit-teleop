@@ -218,7 +218,7 @@ Established by execution against the extracted URDF (Pinocchio 4.1.0), not assum
 |---|---|---|
 | URDF loads without meshes | `nq=10, nv=10` | kinematics-only build is sufficient |
 | **Pinocchio ignores `<mimic>`** | both jaws are independent DOFs | driver **must index q by joint name**, never 1:1 to motors |
-| **Jaw origins are wrong in the URDF** | `rev_motor_08_1/_2` origins kept CAD world coords — jaws sit ~38 cm from `Gripper_Base_v1_1` | extraction artifact; leaf joints, so arm chain/IK/TCP unaffected. Never trust jaw geometry (collision checks, viz, grasp points) |
+| **Jaw origins are wrong in the URDF** | `rev_motor_08_1/_2` origins kept CAD world coords — jaws sit ~38 cm from `Gripper_Base_v1_1` | **upstream vendor bug**, not an extraction artifact: norma-core's own `elrobot_follower.urdf` is joint-for-joint identical to ours (all 18 joints). Leaf joints, so arm chain/IK/TCP unaffected. Never trust jaw geometry (collision checks, viz, grasp points) |
 | Arm Jacobian | 6×7, rank 6 in 100% of 4000 poses | full 6-DOF control, 1 redundant DOF |
 | Workspace | 0.628 × 0.621 × 0.540 m | — |
 | Max reach | 0.424 m | motion scale must drop to ~0.4 |
