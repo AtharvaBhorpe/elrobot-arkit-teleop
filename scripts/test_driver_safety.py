@@ -217,6 +217,25 @@ def main():
     print(f"9. grasp detect/hold/release OK (stalled jaw, signed load, "
           f"latched at contact{d.close_dir * d.grip_squeeze:+d})")
 
+    # 10) freeze during a BUS OUTAGE must not raise (field crash: cameras
+    #     renegotiating shared USB disrupted the serial adapter exactly when
+    #     the deadman tried to freeze; the unguarded read killed the driver).
+    d = make_driver(present)
+    d._on_cmd(cmd({n0: 0.5}))
+    d._tick()
+
+    def dead_read(reg, motors=None, normalize=True, num_retry=0):
+        raise RuntimeError("device disconnected")
+    d.bus.sync_read = dead_read
+    time.sleep(0.25)
+    d._tick()                      # deadman fires -> _freeze on a dead bus
+    assert d.frozen, "must still freeze"
+    assert d.target == {n: present[n] for n in d.target}, \
+        "must latch last known pose"
+    for _ in range(5):
+        d._tick()                  # loop must stay alive on the dead bus
+    print("10. freeze survives a bus outage (latches last known pose) OK")
+
     print("\nALL DRIVER SAFETY TESTS PASSED")
     rclpy.try_shutdown()
     return 0

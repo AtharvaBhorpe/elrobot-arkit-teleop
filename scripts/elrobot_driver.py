@@ -213,11 +213,25 @@ class ElrobotDriver(Node):
         self.last_cmd_time = time.monotonic()
 
     def _freeze(self):
-        """Latch present position as the goal, once."""
+        """Latch present position as the goal, once.
+
+        Must NEVER raise: this is the safety path, and it runs exactly when
+        things are going wrong (deadman, safety hold - or a USB bus outage,
+        which killed the driver once: cameras renegotiating bandwidth on a
+        shared USB bus disrupted the serial adapter, the unguarded read here
+        threw, and the executor died). Falls back to the last known present
+        pose (<= 1 cycle stale) if the bus cannot be read right now.
+        """
         self.frozen = True
-        present = self.bus.sync_read("Present_Position", ALL_JOINTS,
-                                     normalize=False, num_retry=2)
-        self.target = dict(present)
+        try:
+            present = self.bus.sync_read("Present_Position", ALL_JOINTS,
+                                         normalize=False, num_retry=2)
+            self.target = dict(present)
+        except Exception as e:  # noqa: BLE001
+            self.get_logger().warning(
+                f"freeze: bus read failed ({e}); latching last known pose")
+            self._recover_bus()
+            self.target = dict(self.last_present)
 
     def _recover_bus(self):
         """Post-failure hygiene: release the latched port lock and drain RX.
