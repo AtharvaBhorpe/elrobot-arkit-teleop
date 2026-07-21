@@ -18,6 +18,11 @@ from launch_ros.actions import Node
 HERE = Path(__file__).resolve().parent
 URDF = (HERE.parent / "docs" / "urdf_Elrobot_viz.urdf").read_text()
 
+# Conda Qt must not load the SYSTEM ibus input-method plugin (built against
+# a different Qt): heap corruption the moment a dialog opens - rviz2 died
+# with free(): invalid pointer. 'compose' is Qt's built-in IM, always safe.
+QT_SAFE_ENV = {"QT_IM_MODULE": "compose", "QT_IM_MODULES": ""}
+
 # Tuning knobs, passed as environment variables:
 #   ORIENT=0            position-only (phone rotation ignored; often calmer)
 #   SCALE=0.4           phone->TCP translation gain          (receiver)
@@ -46,7 +51,8 @@ def generate_launch_description():
         Node(package="robot_state_publisher", executable="robot_state_publisher",
              parameters=[{"robot_description": URDF}]),
         Node(package="rviz2", executable="rviz2",
-             arguments=["-d", str(HERE / "view.rviz")]),
+             arguments=["-d", str(HERE / "view.rviz")],
+             additional_env=QT_SAFE_ENV),
         ExecuteProcess(cmd=[sys.executable, str(HERE / "elrobot_driver.py")]
                        + _env_args(DRIVER_ENV),
                        output="screen"),
