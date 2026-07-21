@@ -46,6 +46,8 @@ m3-arm = "python scripts/make_viz_urdf.py && ros2 launch scripts/m3.launch.py"
 jog = "python scripts/make_viz_urdf.py && ros2 launch scripts/jog.launch.py"
 # cams: wrist + external camera nodes (WRIST_DEV / EXT_DEV env to pick devices)
 cams = "ros2 launch scripts/cams.launch.py"
+# campick: GUI dropdown of /dev/video* with live feed - identify your cameras
+campick = "python scripts/cam_picker.py"
 # record: episode recorder -> LeRobotDataset (own terminal; ENTER starts/stops)
 record = "python scripts/episode_recorder.py"
 # bag: everything -> mcap rosbag under data/bags/ (Ctrl-C to stop)
