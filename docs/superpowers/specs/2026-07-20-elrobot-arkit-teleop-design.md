@@ -219,6 +219,21 @@ re-checks it; output `calibration/urdf_ticks.json`). What was learned:
   weakly tested so far; one bent-pose `verify_table.py` run clears them before M3.
 - Re-running M1a rewrites EEPROM homing offsets and **invalidates this table**.
 
+**Incident (2026-07-21): joint 2's sign was recorded flipped in M1b.** Root cause:
+the sign prompts ("move so the gripper goes DOWN") were derived from FK **at
+neutral**, but the arm was in an arbitrary folded pose during observation — for
+shoulder-class joints the TCP can sit on the other side of the joint axis, where
+the same +q moves the gripper the opposite way. Caught by the bent-pose FK check
+(prediction 35 cm up vs reality 2 cm up), pinned by an exhaustive flip-fit against
+two measured poses, and settled by the measurement-free direction test: raise the
+gripper by hand and watch decoded q2 in `watch_ticks.py` (+q2 is FK-verified to
+move the TCP down, so q2 must fall as the gripper rises). Fix: one sign flip in
+`calibration/urdf_ticks.json` (offset unchanged — midpoint-derived, symmetric
+limits). **Lesson: hand-observed signs are pose-dependent; only the bent-pose FK
+gate or the watch_ticks direction test is authoritative.** A crude first
+measurement ("iPhone units") had wrongly passed joint 2 — measure verification
+poses with a real tape.
+
 ## Verified findings
 
 Established by execution against the extracted URDF (Pinocchio 4.1.0), not assumed.
