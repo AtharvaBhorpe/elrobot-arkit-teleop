@@ -261,6 +261,18 @@ def rebase_meshes(root):
                    else (0.15, 0.15, 0.15) if name == "camera_mount"
                    else (0.95, 0.45, 0.10))  # printed orange
             _write_dae(dst, verts.reshape(-1, 3, 3), rgb)
+        # ALSO declare the color as a URDF material: Foxglove's URDF layer
+        # colors links from URDF materials, not from mesh-file materials
+        name = link.get("name")
+        rgb = ((0.08, 0.08, 0.08) if name.startswith("ST3215")
+               else (0.15, 0.15, 0.15) if name == "camera_mount"
+               else (0.95, 0.45, 0.10))
+        for old_mat in v.findall("material"):
+            v.remove(old_mat)
+        mat = ET.SubElement(v, "material")
+        mat.set("name", f"col_{name}")
+        c = ET.SubElement(mat, "color")
+        c.set("rgba", f"{rgb[0]} {rgb[1]} {rgb[2]} 1")
         mesh.set("filename", dst.resolve().as_uri())
         if mesh.get("scale"):
             del mesh.attrib["scale"]
