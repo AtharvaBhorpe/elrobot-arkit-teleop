@@ -212,6 +212,10 @@ def rebase_meshes(root):
 def main():
     tree = ET.parse(SRC)
     root = tree.getroot()
+    # sanitize vendor joint names with SPACES ("Rigid 1") - XML-legal but a
+    # classic trap for downstream parsers (Foxglove et al.)
+    for j in root.findall("joint"):
+        j.set("name", j.get("name").replace(" ", "_"))
     fix_jaw_frames(root)
     add_camera(root)
 
