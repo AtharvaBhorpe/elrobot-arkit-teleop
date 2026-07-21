@@ -197,6 +197,11 @@ class ElrobotDriver(Node):
             if not self.frozen:
                 self.get_logger().warning(f"SAFETY HOLD: {why}")
                 self._freeze()
+            # the gripper is kinematically irrelevant to the arm gates -
+            # keep it responsive while the arm holds (a gated arm pose was
+            # silently eating gripper commands)
+            if self.target is not None and GRIPPER_JOINT in ticks:
+                self.target[GRIPPER_JOINT] = ticks[GRIPPER_JOINT]
             return
         self.frozen = False
         self.target = ticks
@@ -332,11 +337,15 @@ def build_args(argv=None):
                    help="ticks of squeeze held past the contact point")
     p.add_argument("--z-min", dest="z_min", type=float, default=0.02)
     p.add_argument("--r-max", dest="r_max", type=float, default=0.45)
-    # Backstop only: measured sigma_min distribution has NEUTRAL at 0.0011
-    # (bottom 1% - arm-up is near-singular). IK's adaptive damping owns the
-    # 13.9% band below 0.01; the driver floor catches only degenerate commands.
+    # Backstop only: catches truly degenerate commands, never working poses.
+    # Measured on hardware: URDF neutral sits at sigma 0.0011 and the slider
+    # GUI's "Center" (mid-limits) pose family at 0.0005-0.0007 - all
+    # legitimate, all held by the earlier 0.0008 floor. IK's adaptive damping
+    # owns the whole near-singular band; the driver's slew clamp bounds any
+    # residual velocity, so the floor only needs to reject the ~0.0001
+    # wrist-aligned degeneracies.
     p.add_argument("--sigma-floor", dest="sigma_floor", type=float,
-                   default=0.0008)
+                   default=0.0002)
     p.add_argument("--no-torque", dest="torque", action="store_false",
                    help="smoke mode: never enable torque, never write goals")
     p.set_defaults(torque=True)

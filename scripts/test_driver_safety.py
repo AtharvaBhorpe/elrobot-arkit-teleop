@@ -138,11 +138,18 @@ def main():
     assert not ok and "z" in why, (ok, why)
     d = make_driver(present)
     d._on_cmd(cmd(q_bad))
-    assert d.frozen and d.target == present, "must freeze at present"
+    assert d.frozen and \
+        {n: d.target[n] for n in ARM_JOINTS} == \
+        {n: present[n] for n in ARM_JOINTS}, "arm must freeze at present"
+    # the gripper stays responsive while the arm is held
+    d._on_cmd(cmd(q_bad, grip=GRIPPER_CLOSED))
+    assert d.target[GRIPPER_JOINT] == conv.grip_ticks(GRIPPER_CLOSED), \
+        "gripper command must survive an arm safety hold"
+    assert d.frozen, "gripper update must not unfreeze the arm"
     # and recovery: a good command un-freezes
     d._on_cmd(cmd({n: 0.0 for n in ARM_JOINTS}))
     assert not d.frozen
-    print(f"6. workspace hold + recovery OK ({why})")
+    print(f"6. workspace hold + gripper-passthrough + recovery OK ({why})")
 
     # 7) sigma floor mechanism (floor raised so neutral trips it)
     d = make_driver(present, sigma_floor=0.02)
