@@ -15,6 +15,7 @@ arm. If that read fails, sliders fall back to zero = URDF neutral and the
 arm WILL slew there on GUI start (a warning is printed).
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -36,7 +37,7 @@ def current_pose_zeros():
 
     conv = Converter(str(HERE.parent / "calibration" / "urdf_ticks.json"))
     bus = FeetechMotorsBus(
-        port="/dev/ttyACM0",
+        port=os.environ.get("PORT", "/dev/ttyACM0"),
         motors={n: Motor(i, "sts3215", MotorNormMode.RANGE_M100_100)
                 for i, n in enumerate(ARM_JOINTS + [GRIPPER_JOINT], start=1)},
         calibration=None)
@@ -64,7 +65,8 @@ def generate_launch_description():
              parameters=[{"robot_description": URDF}]),
         Node(package="rviz2", executable="rviz2",
              arguments=["-d", str(HERE / "view.rviz")]),
-        ExecuteProcess(cmd=[sys.executable, str(HERE / "elrobot_driver.py")],
+        ExecuteProcess(cmd=[sys.executable, str(HERE / "elrobot_driver.py"),
+                            "--port", os.environ.get("PORT", "/dev/ttyACM0")],
                        output="screen"),
         Node(package="joint_state_publisher_gui",
              executable="joint_state_publisher_gui",

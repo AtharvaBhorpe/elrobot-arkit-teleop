@@ -34,7 +34,8 @@ def _env_args(mapping):
             if (v := os.environ.get(env)) is not None for tok in (flag, v)]
 
 
-DRIVER_ENV = [("MAX_VEL", "--max-vel"), ("ACCEL", "--accel"),
+DRIVER_ENV = [("PORT", "--port"),  # e.g. PORT=/dev/ttyACM1 pixi run m3-arm
+              ("MAX_VEL", "--max-vel"), ("ACCEL", "--accel"),
               ("GRIP_SQUEEZE", "--grip-squeeze"),
               ("GRIP_LOAD_THRESH", "--grip-load-thresh"),
               ("Z_MIN", "--z-min"), ("R_MAX", "--r-max")]
