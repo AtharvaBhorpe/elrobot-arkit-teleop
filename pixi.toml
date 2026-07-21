@@ -1,0 +1,30 @@
+[workspace]
+name = "elrobot-arkit-teleop"
+version = "0.1.0"
+description = "ARKit phone teleoperation of the Elrobot arm (ROS 2 Jazzy + lerobot + Pinocchio)"
+channels = ["conda-forge", "robostack-jazzy"]
+platforms = ["linux-64"]
+
+[dependencies]
+# RoboStack ROS 2 Jazzy — ros-base gives rclpy + DDS, no rviz/gazebo (unneeded for the 3 nodes)
+# Jazzy targets 3.12 upstream; git lerobot requires >=3.12
+python = "3.12.*"
+ros-jazzy-ros-base = "*"
+# Kinematics-only Pinocchio for the IK layer (spec: nq=10, meshes not required)
+pinocchio = "*"
+# build/dev basics
+pip = "*"
+# lerobot pins these tighter than conda's defaults — pin conda into the overlap
+setuptools = ">=71,<81"
+packaging = ">=24.2,<26"
+numpy = ">=2.0,<2.3"
+
+[pypi-dependencies]
+# PyPI lerobot==0.1.0 is a stale placeholder with NO motors/feetech code.
+# The maintained bus (FeetechMotorsBus, sync_read/sync_write) lives only on git.
+# The `feetech` extra pulls feetech-servo-sdk itself.
+lerobot = { git = "https://github.com/huggingface/lerobot.git", extras = ["feetech"] }
+
+[tasks]
+# prove-env: the M0/M2 prerequisite gate — all four stacks import in one process
+prove-env = "python scripts/prove_env.py"

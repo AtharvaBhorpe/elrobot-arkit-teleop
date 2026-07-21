@@ -1,7 +1,7 @@
 # ARKit Phone Teleoperation of the Elrobot Arm — Design
 
-**Date:** 2026-07-20
-**Status:** Approved design, pending implementation plan
+**Date:** 2026-07-20 (updated 2026-07-21)
+**Status:** M0 passed, env proven. Next: M1a calibration.
 
 ## Goal
 
@@ -22,6 +22,7 @@ unchanged; all new work sits below the joint-command boundary.
 | Gripper | one servo driving two prismatic jaws as URDF `<mimic>` joints |
 | Servos | Feetech STS3215, 4096 ticks/rev, ~2.94 N·m stall |
 | Bus | single half-duplex serial via CH343 USB adapter (`1a86:55d3`) |
+| Port | `/dev/ttyACM0` — CH343 binds `cdc_acm`, **not** `ttyUSB`. Needs `dialout`. |
 | URDF | extracted from the NormaCore `station` binary; 18 joints, 19 links |
 
 ### Why not NormaCore station
@@ -197,6 +198,29 @@ rev_motor_06  [-1.3775, +1.7641]
 rev_motor_07  [-3.2014, +2.7336]
 ```
 
+### Bus measurements (M0, 2026-07-21)
+
+Measured on hardware, 200 samples per transaction, all 8 motors per call, torque
+disabled. lerobot 0.6.1 `FeetechMotorsBus`, `normalize=False`, protocol 0.
+
+| Transaction | p50 | p95 | max | Failures |
+|---|---|---|---|---|
+| `sync_read` (8 motors) | **1.34 ms** | 1.39 ms | 1.79 ms | 0/200 |
+| `sync_write` (8 motors) | **0.32 ms** | 0.37 ms | 0.59 ms | 0/200 |
+
+- **Gate passed** with ~3.7× margin (1.34 ms against the 5 ms threshold).
+- **~122× faster than station.** Station's 20–21 ms per *individual* motor gives
+  ≈164 ms ≈ 6 Hz for 8 reads. One `sync_read` does all 8 in 1.34 ms (~746 Hz).
+- **Full read+write cycle ≈ 1.66 ms → ~600 Hz ceiling.** The bus is not the
+  bottleneck; IK solve time will dominate the servo loop.
+- **Jitter is negligible** — p95 within 0.05 ms of p50. No CDC-ACM latency tuning
+  needed. Tight jitter matters more than raw speed for a servo loop.
+- **Zero desync in 200 reads.** Station's stale-RX defect did not reproduce;
+  lerobot's own RX handling holds. `connect(handshake=True)` confirmed all 8
+  servos answer at their expected IDs.
+- Writes are ~4× faster than reads because Feetech SYNC WRITE is a broadcast with
+  no status reply — the host never waits on the half-duplex bus.
+
 ## Safety requirements
 
 Non-negotiable, all enforced in `elrobot_driver`:
@@ -214,17 +238,47 @@ In simulation a bad IK solve is a visual glitch. Here it is a collision.
 
 | Risk | Status |
 |---|---|
-| Bus rate under LeRobot `sync_read` | **unmeasured** — hardware currently unplugged. Gates the whole project. |
-| Does `FeetechMotorsBus.connect()` require calibration to read? | **unconfirmed.** If yes, M0 depends on M1 and they are not parallel. |
-| RoboStack ROS 2 Jazzy + lerobot in one env | **unproven.** Test in a throwaway env before committing. |
+| Bus rate under LeRobot `sync_read` | **RESOLVED 2026-07-21.** Measured p50 1.34 ms for all 8 motors. See Bus measurements. |
+| Does `FeetechMotorsBus.connect()` require calibration to read? | **RESOLVED 2026-07-21: no.** `connect(handshake=True)` takes no calibration argument, and `sync_read(..., normalize=False)` returns raw ticks uncalibrated. M0 and M1 are independent. |
+| RoboStack ROS 2 Jazzy + lerobot in one env | **RESOLVED 2026-07-21: proven.** One pixi env, Python 3.12. See Environment. |
 | URDF inertias understated | likely; derate torque margin ~2× |
 | Motor 8 mechanical state | overload was commanded-past-stop, not gravity; confirm jaws move freely by hand |
+
+## Environment (proven 2026-07-21)
+
+One `pixi` env holds the whole stack — no split env or per-node isolation needed.
+`pixi.toml` / `pixi.lock` at repo root; `pixi run prove-env` re-verifies.
+
+| | |
+|---|---|
+| Python | 3.12 |
+| ROS 2 | Jazzy via RoboStack (`ros-jazzy-ros-base` — no rviz/gazebo) |
+| Pinocchio | 4.1.0 (conda-forge) |
+| lerobot | 0.6.1 |
+| numpy | 2.2.6 |
+
+Four non-obvious constraints, each found by a failed solve:
+
+1. **PyPI `lerobot` is a stale placeholder.** `lerobot==0.1.0` on PyPI ships only
+   `datasets/envs/policies` — **no motor or Feetech code at all**. The maintained
+   bus exists only on git. Install from the GitHub source with the `feetech` extra.
+2. **Python must be 3.12.** git lerobot requires `>=3.12`; Jazzy targets 3.12
+   upstream anyway. 3.11 fails to resolve.
+3. **numpy must be 2.x** (lerobot pins `>=2.0,<2.3`), while conda would otherwise
+   serve numpy 1.26 for ROS/Pinocchio. RoboStack Jazzy has numpy-2 builds, so
+   rclpy and Pinocchio import cleanly under numpy 2 — verified, not assumed.
+4. **`setuptools` and `packaging` need conda-side pins** (`setuptools>=71,<81`,
+   `packaging>=24.2,<26`) or the conda solve pins versions lerobot rejects.
+
+`FeetechMotorsBus` lives at `lerobot.motors.feetech`. Read raw ticks with
+`sync_read(..., normalize=False)` — normalization requires calibration, so
+uncalibrated work (M0, M1b) must pass `normalize=False`.
 
 ## Milestones
 
 | | Milestone | Gate |
 |---|---|---|
-| M0 | Bus probe — `sync_read`/`sync_write` rate, desync check | p50 < 5 ms → proceed; ~20 ms → fix USB transport first |
+| M0 | Bus probe — `sync_read`/`sync_write` rate, desync check | ✅ **PASSED 2026-07-21.** p50 1.34 ms read / 0.32 ms write, 0 desync. `scripts/m0_bus_probe.py` |
 | M1a | LeRobot calibration | all 8 motors calibrated, ranges sane |
 | M1b | URDF↔tick offset/sign table | FK agreement with physical pose |
 | M2 | Receiver + IK + viewer, no hardware | phone drives the model in a viewer |
