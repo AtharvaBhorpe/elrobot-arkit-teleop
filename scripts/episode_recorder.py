@@ -47,7 +47,6 @@ class Recorder(Node):
         self.dataset = None
         self.recording = False
         self.n_frames = 0
-        self.n_ticks = 0
 
         self.create_subscription(Image, "/wrist_cam/image",
                                  lambda m: self._img(m, "wrist"), 1)
@@ -104,7 +103,6 @@ class Recorder(Node):
         self.get_logger().info(f"dataset created at {self.args.root}")
 
     def _tick(self):
-        self.n_ticks += 1
         if not self.recording:
             return
         s, why = self._sample()
@@ -146,7 +144,7 @@ class Recorder(Node):
             self.dataset.save_episode()
             self.get_logger().info(f"episode saved ({self.n_frames} frames)")
         else:
-            self.get_logger().warning(f"nothing recorded, nothing saved ({self.n_ticks} ticks seen)")
+            self.get_logger().warning("nothing recorded, nothing saved")
 
     def close(self):
         if self.dataset is not None:

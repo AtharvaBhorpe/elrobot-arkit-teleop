@@ -11,8 +11,9 @@ Safety, enforced every cycle:
                    -> hold (table strikes are the real desk hazard).
   sigma_min floor  commanded pose too near singular -> hold.
   joint limits     URDF clamp (defense in depth; IK clamps too).
-  gripper current  Torque_Limit written for motor 8 at startup; Status byte
-                   checked each cycle (motor 8 has latched Overload before).
+  gripper current  Torque_Limit caps motor 8's force, and the grasp latch
+                   stops closing at contact (motor 8 has latched Overload
+                   from being driven past its stop before this project).
   deadman          no /joint_command for 200 ms -> freeze: latch present
                    position as goal ONCE (re-writing present each cycle would
                    let gravity walk the arm down).

@@ -8,12 +8,10 @@ smoke-mode write suppression, gripper Torque_Limit.
     pixi run python scripts/test_driver_safety.py
 """
 
-import argparse
 import sys
 import time
 from pathlib import Path
 
-import numpy as np
 import rclpy
 from sensor_msgs.msg import JointState
 
@@ -21,7 +19,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from cartesian_ik import ARM_JOINTS, GRIPPER_CLOSED, GRIPPER_JOINT  # noqa: E402
 from elrobot_driver import (  # noqa: E402
-    ALL_JOINTS, Converter, ElrobotDriver, SafetyGate, TICKS_PER_RAD, build_args,
+    Converter, ElrobotDriver, SafetyGate, TICKS_PER_RAD, build_args,
 )
 
 

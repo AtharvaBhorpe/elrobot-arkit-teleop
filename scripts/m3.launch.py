@@ -34,7 +34,7 @@ QT_SAFE_ENV = {"QT_IM_MODULE": "compose", "QT_IM_MODULES": "",
 #   MAX_VEL=0.6         per-joint velocity clamp, rad/s      (driver)
 #   ACCEL=40            servo acceleration register          (driver)
 #   GRIP_SQUEEZE=40     ticks of squeeze past grasp contact  (driver)
-#   GRIP_LOAD_THRESH=150  grasp load threshold, 0.1%/LSB     (driver)
+#   GRIP_LOAD_THRESH=200  grasp load threshold, 0.1%/LSB     (driver)
 # e.g.:  SCALE=0.3 ORIENT=0 pixi run m3-arm
 
 

@@ -35,21 +35,9 @@ def main() -> int:
     # take an arg to skip calibration? (spec risk: M0 vs M1 ordering)
     print("feetech bus API:")
     try:
-        import importlib
         import inspect
 
-        FeetechMotorsBus = None
-        for path in ("lerobot.motors.feetech",
-                     "lerobot.common.motors.feetech"):
-            try:
-                FeetechMotorsBus = getattr(
-                    importlib.import_module(path), "FeetechMotorsBus")
-                print(f"  found in: {path}")
-                break
-            except (ImportError, AttributeError):
-                continue
-        if FeetechMotorsBus is None:
-            raise ModuleNotFoundError("FeetechMotorsBus not on known paths")
+        from lerobot.motors.feetech import FeetechMotorsBus
 
         sig = inspect.signature(FeetechMotorsBus.connect)
         print(f"  connect{sig}")
