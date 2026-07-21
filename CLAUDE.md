@@ -9,6 +9,6 @@
 - `/preflight` before any hardware session; `/recalibrate` is the guided
   servo recalibration procedure (user-invoked only — it writes EEPROM).
 - The `safety-reviewer` agent reviews any diff touching
-  `scripts/elrobot_driver.py` or `scripts/cartesian_ik.py`.
+  `src/elrobot/nodes/elrobot_driver.py` or `src/elrobot/control/cartesian_ik.py`.
 - The arm is on a desk. When in doubt about a powered action, ask; the cost
   asymmetry is a real collision vs. one question.

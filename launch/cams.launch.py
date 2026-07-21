@@ -11,20 +11,21 @@ import os
 import sys
 from pathlib import Path
 
-from launch import LaunchDescription
 from launch.actions import ExecuteProcess
 
+from launch import LaunchDescription
+
 HERE = Path(__file__).resolve().parent
-CAM = str(HERE / "cam_node.py")
+CAM = "elrobot.nodes.cam_node"
 
 
 def generate_launch_description():
     return LaunchDescription([
-        ExecuteProcess(cmd=[sys.executable, CAM,
+        ExecuteProcess(cmd=[sys.executable, "-m", CAM,
                             "--device", os.environ.get("WRIST_DEV", "/dev/video0"),
                             "--topic", "/wrist_cam/image",
                             "--name", "wrist_cam"], output="screen"),
-        ExecuteProcess(cmd=[sys.executable, CAM,
+        ExecuteProcess(cmd=[sys.executable, "-m", CAM,
                             "--device", os.environ.get("EXT_DEV", "/dev/video2"),
                             "--topic", "/ext_cam/image",
                             "--name", "ext_cam"], output="screen"),

@@ -30,7 +30,7 @@ each failure. Do not launch anything; this skill only inspects and cleans.
    uncalibrated. Point to /recalibrate.
 
 6. **Torque state warning**: if the previous session ended with the driver,
-   torque is ON and the arm is holding. `scripts/watch_ticks.py` releases it
+   torque is ON and the arm is holding. `pixi run ticks` releases it
    (arm goes limp — it must be supported or resting).
 
 ## Output

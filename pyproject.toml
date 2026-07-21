@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=71,<81"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "elrobot"
+version = "0.1.0"
+description = "ARKit phone teleoperation of the Elrobot arm"
+requires-python = ">=3.12"
+
+[tool.setuptools.packages.find]
+where = ["src"]

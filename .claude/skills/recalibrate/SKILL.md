@@ -16,7 +16,7 @@ outputs and gate progression.
 - Torque will be off throughout: the arm is limp and will sag. Rest it low.
 - Have a REAL tape measure. "iPhone units" wrongly passed a flipped sign once.
 
-## Step 1 — M1a: `pixi run python scripts/m1a_calibrate.py`
+## Step 1 — M1a: `pixi run python -m elrobot.calibration.m1a_calibrate`
 
 - Park pose needs no precision (±79° tolerance on swept joints): any relaxed
   pose with no joint within ~20° of a hard stop.
@@ -36,8 +36,8 @@ outputs and gate progression.
 
 ## Step 3 — Sign verification (authoritative, ~30 s per joint)
 
-Two terminals: `pixi run view` (sliders) + `pixi run python
-scripts/watch_ticks.py`. For EVERY joint 1–7:
+Two terminals: `pixi run view` (sliders) + `pixi run ticks`
+(live joint monitor). For EVERY joint 1–7:
 - Move the slider positive → note the model's motion direction.
 - Move the real joint by hand so its q INCREASES on the monitor → the real
   motion must match the model's. Opposite = flip that joint's `sign` in
@@ -46,7 +46,7 @@ scripts/watch_ticks.py`. For EVERY joint 1–7:
 - Rolls (5/7): compare spin direction viewed from the base along the arm.
   Gentle — near-full-turn joints, and motor 8 has an Overload history.
 
-## Step 4 — FK gate: `pixi run python scripts/verify_table.py`
+## Step 4 — FK gate: `pixi run python -m elrobot.calibration.verify_table`
 
 - Pose must be CLEARLY BENT (near neutral every sign error is invisible —
   the script's sensitivity column must say "yes" for the joints you care

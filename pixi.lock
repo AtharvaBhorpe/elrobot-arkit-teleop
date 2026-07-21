@@ -655,6 +655,7 @@ environments:
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-yaml-cpp-vendor-9.0.1-np2py312h2ed9cc7_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros-jazzy-zstd-vendor-0.26.10-np2py312h2ed9cc7_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-64/ros2-distro-mutex-0.15.0-jazzy_18.conda
+      - pypi: ./
       - pypi: git+https://github.com/huggingface/lerobot.git#1bb9933215dcb7ffeeae6d3746cda3f73f5a59e2
       - pypi: https://download-r2.pytorch.org/whl/cu128/torch-2.11.0%2Bcu128-cp312-cp312-manylinux_2_28_x86_64.whl
       - pypi: https://download-r2.pytorch.org/whl/cu128/torchvision-0.26.0%2Bcu128-cp312-cp312-manylinux_2_28_x86_64.whl
@@ -12353,6 +12354,9 @@ packages:
   license: BSD-3-Clause
   size: 2365
   timestamp: 1782298667746
+- pypi: ./
+  name: elrobot
+  requires_python: '>=3.12'
 - pypi: git+https://github.com/huggingface/lerobot.git#1bb9933215dcb7ffeeae6d3746cda3f73f5a59e2
   name: lerobot
   version: 0.6.1

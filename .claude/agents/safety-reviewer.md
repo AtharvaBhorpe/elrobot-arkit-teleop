@@ -1,6 +1,6 @@
 ---
 name: safety-reviewer
-description: Reviews any change touching scripts/elrobot_driver.py or scripts/cartesian_ik.py against the project's safety invariants before it reaches hardware. Use PROACTIVELY after editing either file, and before committing driver/IK changes.
+description: Reviews any change touching src/elrobot/nodes/elrobot_driver.py or src/elrobot/control/cartesian_ik.py against the project's safety invariants before it reaches hardware. Use PROACTIVELY after editing either file, and before committing driver/IK changes.
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -44,11 +44,11 @@ the code shows otherwise.
 
 ## Procedure
 
-1. `git diff HEAD -- scripts/elrobot_driver.py scripts/cartesian_ik.py`
+1. `git diff HEAD -- src/elrobot/nodes/elrobot_driver.py src/elrobot/control/cartesian_ik.py`
    (or the range the caller names). Read the full functions around every
    hunk, not just the hunk.
 2. Walk the invariant list. For any BROKEN/WEAKENED, show the exact line
    and the failure scenario on real hardware.
-3. Check test coverage: does scripts/test_driver_safety.py (or the IK
+3. Check test coverage: does tests/test_driver_safety.py (or the IK
    self-test) exercise the changed behavior? If not, name the missing case.
 4. Verdict: SAFE TO RUN ON HARDWARE / FIX FIRST, with the fix list.

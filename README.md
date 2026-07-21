@@ -63,10 +63,10 @@ FREEZE= GRIP_LOAD_THRESH= GRIP_SQUEEZE= Z_MIN= R_MAX= RVIZ=0`.
 ## Safety model
 
 - The driver's module docstring is the safety contract; `pixi run python
-  scripts/test_driver_safety.py` proves all 10 mechanisms on a stub bus.
+  tests/test_driver_safety.py` proves all 10 mechanisms on a stub bus.
 - `calibration/*.json` and `docs/urdf_Elrobot.urdf` are hand-measured
   physical truth — never edited casually (a repo hook blocks agent edits).
-- Driver exit leaves torque ON holding; `scripts/watch_ticks.py` releases
+- Driver exit leaves torque ON holding; `pixi run ticks` releases
   it (the arm goes limp — support it).
 - Integration tests pin `ROS_DOMAIN_ID=77` so they can never touch a live
   session.
@@ -74,7 +74,9 @@ FREEZE= GRIP_LOAD_THRESH= GRIP_SQUEEZE= Z_MIN= R_MAX= RVIZ=0`.
 ## Repository map
 
 ```
-scripts/        nodes, control library, calibration tools, launches, tests
+src/elrobot/    the package: control/ nodes/ calibration/ tools/
+launch/ config/  ros2 launch files, rviz config
+tests/          offline suites (pixi run test)
 calibration/    servo tick ↔ URDF radian tables (sacred)
 docs/           real URDF (kinematic truth), vendored meshes, design spec
 data/           episodes, bags, derived viz meshes (gitignored)

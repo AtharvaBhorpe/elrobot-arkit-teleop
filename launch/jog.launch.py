@@ -19,11 +19,12 @@ import os
 import sys
 from pathlib import Path
 
-from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+
+from launch import LaunchDescription
 
 HERE = Path(__file__).resolve().parent
 URDF = (HERE.parent / "docs" / "urdf_Elrobot_viz.urdf").read_text()
@@ -33,15 +34,15 @@ URDF = (HERE.parent / "docs" / "urdf_Elrobot_viz.urdf").read_text()
 # with free(): invalid pointer. 'compose' is Qt's built-in IM, always safe.
 QT_SAFE_ENV = {"QT_IM_MODULE": "compose", "QT_IM_MODULES": "",
                "QT_QPA_PLATFORMTHEME": ""}  # no system gtk3 theme plugin
-sys.path.insert(0, str(HERE))
 
 
 def current_pose_zeros():
     """Read the real arm pose -> {'zeros.<joint>': rad} for the slider GUI."""
-    from cartesian_ik import ARM_JOINTS, GRIPPER_JOINT
-    from elrobot_driver import Converter
     from lerobot.motors import Motor, MotorNormMode
     from lerobot.motors.feetech import FeetechMotorsBus
+
+    from elrobot.control.cartesian_ik import ARM_JOINTS, GRIPPER_JOINT
+    from elrobot.nodes.elrobot_driver import Converter
 
     conv = Converter(str(HERE.parent / "calibration" / "urdf_ticks.json"))
     bus = FeetechMotorsBus(
@@ -76,10 +77,10 @@ def generate_launch_description():
         Node(package="robot_state_publisher", executable="robot_state_publisher",
              parameters=[{"robot_description": URDF}]),
         Node(package="rviz2", executable="rviz2",
-             arguments=["-d", str(HERE / "view.rviz")],
+             arguments=["-d", str(HERE.parent / "config" / "view.rviz")],
              additional_env=QT_SAFE_ENV,
              condition=IfCondition(LaunchConfiguration("rviz"))),
-        ExecuteProcess(cmd=[sys.executable, str(HERE / "elrobot_driver.py"),
+        ExecuteProcess(cmd=[sys.executable, "-m", "elrobot.nodes.elrobot_driver",
                             "--port", os.environ.get("PORT", "/dev/ttyACM0")],
                        output="screen"),
         Node(package="joint_state_publisher_gui",

@@ -22,9 +22,7 @@ import numpy as np
 import rclpy
 from sensor_msgs.msg import Image, JointState
 
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
-from cartesian_ik import ARM_JOINTS, GRIPPER_JOINT, JAW_MIMIC  # noqa: E402
+from elrobot.control.cartesian_ik import ARM_JOINTS, GRIPPER_JOINT, JAW_MIMIC  # noqa: E402
 
 ROOT = Path("data/test_episodes")
 JOINTS = ARM_JOINTS + [GRIPPER_JOINT]
@@ -74,7 +72,7 @@ def main():
     spin.start()
 
     proc = subprocess.run(
-        [sys.executable, str(HERE / "episode_recorder.py"),
+        [sys.executable, "-m", "elrobot.nodes.episode_recorder",
          "--auto", "2", "--root", str(ROOT), "--task", "test"],
         capture_output=True, text=True, timeout=180)
     print(proc.stdout[-800:] or "", proc.stderr[-800:] or "")

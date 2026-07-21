@@ -23,18 +23,15 @@ import os
 os.environ.setdefault("HF_HUB_OFFLINE", "1")  # local datasets, never the network
 
 import argparse
-import sys
 import threading
 import time
-from pathlib import Path
 
 import numpy as np
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, JointState
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from cartesian_ik import ARM_JOINTS, GRIPPER_JOINT  # noqa: E402
+from elrobot.control.cartesian_ik import ARM_JOINTS, GRIPPER_JOINT  # noqa: E402
 
 JOINTS = ARM_JOINTS + [GRIPPER_JOINT]
 STALE_S = 0.5

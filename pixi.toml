@@ -36,37 +36,41 @@ numpy = ">=2.0,<2.3"
 # The maintained bus (FeetechMotorsBus, sync_read/sync_write) lives only on git.
 # The `feetech` extra pulls feetech-servo-sdk itself.
 lerobot = { git = "https://github.com/huggingface/lerobot.git", extras = ["feetech", "dataset"] }
+# this repo itself, importable as `elrobot.*` everywhere (nodes, launches, tests)
+elrobot = { path = ".", editable = true }
 
 [tasks]
 # prove-env: the M0/M2 prerequisite gate — all four stacks import in one process
-prove-env = "python scripts/prove_env.py"
+prove-env = "python -m elrobot.tools.prove_env"
 # test: every offline suite (stub bus + fake phone + IK self-test + dataset)
-test = "python scripts/test_driver_safety.py && python scripts/cartesian_ik.py && python scripts/test_recorder.py && python scripts/test_m2_pipeline.py"
-lint = "ruff check scripts/"
+test = "python tests/test_driver_safety.py && python -m elrobot.control.cartesian_ik && python tests/test_recorder.py && python tests/test_m2_pipeline.py"
+lint = "ruff check src/ tests/ launch/"
+# ticks: live tick/angle/load monitor; also RELEASES TORQUE (arm goes limp)
+ticks = "python -m elrobot.tools.watch_ticks"
 # view: URDF in rviz2 with joint sliders (regenerates viz URDF first)
-view = "python scripts/make_viz_urdf.py && ros2 launch scripts/view.launch.py"
+view = "python -m elrobot.tools.make_viz_urdf && ros2 launch launch/view.launch.py"
 # m2: phone (ZIG SIM PRO -> UDP :50000) drives the model in rviz2, no hardware
-m2 = "python scripts/make_viz_urdf.py && ros2 launch scripts/m2.launch.py"
+m2 = "python -m elrobot.tools.make_viz_urdf && ros2 launch launch/m2.launch.py"
 # m3-arm: phone drives the REAL arm (driver + ik --no-sim-state + receiver)
-m3-arm = "python scripts/make_viz_urdf.py && ros2 launch scripts/m3.launch.py"
+m3-arm = "python -m elrobot.tools.make_viz_urdf && ros2 launch launch/m3.launch.py"
 # m3-arm5: SO-101-style 5+1 DoF - joints 3 and 5 frozen at their start
 # pose. Task-priority servo: position EXACT, wrist pitch/roll tracked in
 # position's null space, yaw follows the arm (5 joints cannot yaw freely)
-m3-arm5 = "python scripts/make_viz_urdf.py && FREEZE=rev_motor_03,rev_motor_05 ros2 launch scripts/m3.launch.py"
+m3-arm5 = "python -m elrobot.tools.make_viz_urdf && FREEZE=rev_motor_03,rev_motor_05 ros2 launch launch/m3.launch.py"
 # m3-arm6: 6+1 DoF with FULL orientation - joint 3 frozen (a redundant
 # pitch). NOT joint 5: without that roll the 6-joint Jacobian is
 # near-singular (sigma_min 1e-4) and even position tracking stalls 37 mm
 # short - 6-DoF control on this arm needs both rolls.
-m3-arm6 = "python scripts/make_viz_urdf.py && FREEZE=rev_motor_03 ros2 launch scripts/m3.launch.py"
+m3-arm6 = "python -m elrobot.tools.make_viz_urdf && FREEZE=rev_motor_03 ros2 launch launch/m3.launch.py"
 # jog: sliders drive the REAL arm through the driver; sliders seed from the
 # arm's current pose (falls back to zero/neutral if the pre-launch read fails)
-jog = "python scripts/make_viz_urdf.py && ros2 launch scripts/jog.launch.py"
+jog = "python -m elrobot.tools.make_viz_urdf && ros2 launch launch/jog.launch.py"
 # cams: wrist + external camera nodes (WRIST_DEV / EXT_DEV env to pick devices)
-cams = "ros2 launch scripts/cams.launch.py"
+cams = "ros2 launch launch/cams.launch.py"
 # campick: GUI dropdown of /dev/video* with live feed - identify your cameras
-campick = "python scripts/cam_picker.py"
+campick = "python -m elrobot.tools.cam_picker"
 # record: episode recorder -> LeRobotDataset (own terminal; ENTER starts/stops)
-record = "python scripts/episode_recorder.py"
+record = "python -m elrobot.nodes.episode_recorder"
 # rqt-cam: camera feed viewer (pick topic from its dropdown)
 rqt-cam = "env QT_IM_MODULE=compose QT_IM_MODULES= QT_QPA_PLATFORMTHEME= ros2 run rqt_image_view rqt_image_view"
 # bridge: foxglove websocket - connect Foxglove Studio to ws://localhost:8765

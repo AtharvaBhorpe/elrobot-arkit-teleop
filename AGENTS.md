@@ -13,12 +13,12 @@ phone -UDP-> arkit_receiver -/target_pose-> ik -/joint_command-> elrobot_driver 
                                                      +--/joint_states---+
 ```
 
-- `scripts/elrobot_driver.py` — the ONLY code touching hardware; ALL safety
+- `src/elrobot/nodes/elrobot_driver.py` — the ONLY code touching hardware; ALL safety
   lives here (slew/velocity clamp, workspace box, sigma floor, deadman,
   grasp latch). Its module docstring is the safety contract.
-- `scripts/cartesian_ik.py` — DLS servo IK; task-priority when joints are
-  frozen (SO-101 modes). Self-test: `pixi run python scripts/cartesian_ik.py`.
-- `scripts/make_viz_urdf.py` — derives the display model (DAE meshes,
+- `src/elrobot/control/cartesian_ik.py` — DLS servo IK; task-priority when joints are
+  frozen (SO-101 modes). Self-test: `pixi run python -m elrobot.control.cartesian_ik`.
+- `src/elrobot/tools/make_viz_urdf.py` — derives the display model (DAE meshes,
   relocated jaw frames, camera). Kinematics ALWAYS from docs/urdf_Elrobot.urdf.
 
 ## Tasks
@@ -50,8 +50,8 @@ FREEZE= GRIP_LOAD_THRESH= GRIP_SQUEEZE= Z_MIN= R_MAX= RVIZ=0`.
    kill the child pid.
 4. **Never use rviz "Add Display"** in this env (conda rviz2 heap-crashes
    creating render panels at runtime). Add displays by editing
-   `scripts/view.rviz`. Foxglove is the crash-free GUI.
-5. **Driver exit leaves torque ON holding**; `scripts/watch_ticks.py`
+   `config/view.rviz`. Foxglove is the crash-free GUI.
+5. **Driver exit leaves torque ON holding**; `pixi run ticks`
    disables torque (arm goes limp — support it).
 6. **Hand-observed joint signs are pose-dependent** (2 of 7 were recorded
    flipped). Only the slider-vs-hand direction test or a bent-pose FK check
@@ -62,7 +62,7 @@ FREEZE= GRIP_LOAD_THRESH= GRIP_SQUEEZE= Z_MIN= R_MAX= RVIZ=0`.
 
 ## Test suites (all offline-safe, run before committing driver/IK changes)
 
-- `pixi run python scripts/test_driver_safety.py` — 10 checks, stub bus
-- `pixi run python scripts/test_m2_pipeline.py` — end-to-end, fake phone
-- `pixi run python scripts/cartesian_ik.py` — IK self-test incl. frozen modes
-- `pixi run python scripts/test_recorder.py` — dataset round-trip
+- `pixi run python tests/test_driver_safety.py` — 10 checks, stub bus
+- `pixi run python tests/test_m2_pipeline.py` — end-to-end, fake phone
+- `pixi run python -m elrobot.control.cartesian_ik` — IK self-test incl. frozen modes
+- `pixi run python tests/test_recorder.py` — dataset round-trip

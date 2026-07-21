@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 import pinocchio as pin
 
-URDF = str(Path(__file__).resolve().parent.parent / "docs" / "urdf_Elrobot.urdf")
+URDF = str(Path(__file__).resolve().parents[3] / "docs" / "urdf_Elrobot.urdf")
 TCP_FRAME = "Gripper_Base_v1_1"
 ARM_JOINTS = [f"rev_motor_{i:02d}" for i in range(1, 8)]
 GRIPPER_JOINT = "rev_motor_08"

@@ -1,22 +1,20 @@
-"""M2 — phone drives the model in rviz2, no hardware.
+"""View the Elrobot stick-figure URDF in rviz2 with joint sliders.
 
-    pixi run m2
+    pixi run view
 
-iPhone (ZIG SIM PRO, UDP :50000) -> arkit_receiver -> /target_pose -> ik
--> /joint_states -> robot_state_publisher -> rviz2.
-
-Same viewer as `pixi run view`, with the ik node in place of the sliders.
+Sliders (joint_state_publisher_gui) -> /joint_states -> robot_state_publisher
+-> TF -> rviz2. Later, M2's ik node replaces the sliders on the same topic.
 """
 
 import os
-import sys
 from pathlib import Path
 
-from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess
+from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+
+from launch import LaunchDescription
 
 HERE = Path(__file__).resolve().parent
 URDF = (HERE.parent / "docs" / "urdf_Elrobot_viz.urdf").read_text()
@@ -36,12 +34,11 @@ def generate_launch_description():
                               default_value=os.environ.get("RVIZ", "true")),
         Node(package="robot_state_publisher", executable="robot_state_publisher",
              parameters=[{"robot_description": URDF}]),
+        Node(package="joint_state_publisher_gui",
+             executable="joint_state_publisher_gui",
+             additional_env=QT_SAFE_ENV),
         Node(package="rviz2", executable="rviz2",
-             arguments=["-d", str(HERE / "view.rviz")],
+             arguments=["-d", str(HERE.parent / "config" / "view.rviz")],
              additional_env=QT_SAFE_ENV,
              condition=IfCondition(LaunchConfiguration("rviz"))),
-        ExecuteProcess(cmd=[sys.executable, str(HERE / "ik_node.py")],
-                       output="screen"),
-        ExecuteProcess(cmd=[sys.executable, str(HERE / "arkit_receiver.py")],
-                       output="screen"),
     ])

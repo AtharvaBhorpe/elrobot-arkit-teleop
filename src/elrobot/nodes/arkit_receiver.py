@@ -18,10 +18,8 @@ Interaction (finger count from ZIG SIM's touch array):
 import argparse
 import json
 import socket
-import sys
 import threading
 import time
-from pathlib import Path
 
 import numpy as np
 import pinocchio as pin
@@ -31,8 +29,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from cartesian_ik import (  # noqa: E402
+from elrobot.control.cartesian_ik import (  # noqa: E402
     ARM_JOINTS,
     GRIPPER_CLOSED,
     GRIPPER_OPEN,

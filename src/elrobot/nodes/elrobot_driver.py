@@ -30,7 +30,6 @@ Ctrl-C leaves torque ON, holding. Release with scripts/watch_ticks.py.
 
 import argparse
 import json
-import sys
 import time
 from pathlib import Path
 
@@ -40,8 +39,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from cartesian_ik import (  # noqa: E402
+from elrobot.control.cartesian_ik import (  # noqa: E402
     ARM_JOINTS,
     GRIPPER_CLOSED,
     GRIPPER_JOINT,
@@ -406,7 +404,7 @@ def main():
         pass
     finally:
         node.get_logger().info(
-            "exiting: torque left ON holding (release: scripts/watch_ticks.py)")
+            "exiting: torque left ON holding (release: pixi run ticks)")
         node.destroy_node()
         rclpy.try_shutdown()
 

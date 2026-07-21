@@ -8,15 +8,12 @@ freezes on silence, so a single message would move ~0.2 s worth and stop).
 """
 
 import argparse
-import sys
 import time
-from pathlib import Path
 
 import rclpy
 from sensor_msgs.msg import JointState
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from cartesian_ik import ARM_JOINTS, GRIPPER_JOINT  # noqa: E402
+from elrobot.control.cartesian_ik import ARM_JOINTS, GRIPPER_JOINT  # noqa: E402
 
 ALL = ARM_JOINTS + [GRIPPER_JOINT]
 

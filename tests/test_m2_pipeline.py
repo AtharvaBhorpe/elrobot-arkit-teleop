@@ -18,16 +18,18 @@ import subprocess
 import sys
 import threading
 import time
-from pathlib import Path
 
 import numpy as np
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
-from cartesian_ik import ARM_JOINTS, GRIPPER_CLOSED, GRIPPER_JOINT, CartesianServoIK  # noqa: E402
+from elrobot.control.cartesian_ik import (  # noqa: E402
+    ARM_JOINTS,
+    GRIPPER_CLOSED,
+    GRIPPER_JOINT,
+    CartesianServoIK,
+)
 
 PORT = 50123
 SCALE = 0.4
@@ -67,9 +69,9 @@ class Probe(Node):
 
 
 def main():
-    procs = [subprocess.Popen([sys.executable, str(HERE / s), *a])
-             for s, a in ((("ik_node.py"), []),
-                          (("arkit_receiver.py"), ["--port", str(PORT)]))]
+    procs = [subprocess.Popen([sys.executable, "-m", m, *a])
+             for m, a in (("elrobot.nodes.ik_node", []),
+                          ("elrobot.nodes.arkit_receiver", ["--port", str(PORT)]))]
     try:
         rclpy.init()
         probe = Probe()

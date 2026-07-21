@@ -11,11 +11,12 @@ import os
 import sys
 from pathlib import Path
 
-from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+
+from launch import LaunchDescription
 
 HERE = Path(__file__).resolve().parent
 URDF = (HERE.parent / "docs" / "urdf_Elrobot_viz.urdf").read_text()
@@ -58,18 +59,18 @@ def generate_launch_description():
         Node(package="robot_state_publisher", executable="robot_state_publisher",
              parameters=[{"robot_description": URDF}]),
         Node(package="rviz2", executable="rviz2",
-             arguments=["-d", str(HERE / "view.rviz")],
+             arguments=["-d", str(HERE.parent / "config" / "view.rviz")],
              additional_env=QT_SAFE_ENV,
              condition=IfCondition(LaunchConfiguration("rviz"))),
-        ExecuteProcess(cmd=[sys.executable, str(HERE / "elrobot_driver.py")]
+        ExecuteProcess(cmd=[sys.executable, "-m", "elrobot.nodes.elrobot_driver"]
                        + _env_args(DRIVER_ENV),
                        output="screen"),
-        ExecuteProcess(cmd=[sys.executable, str(HERE / "ik_node.py"),
+        ExecuteProcess(cmd=[sys.executable, "-m", "elrobot.nodes.ik_node",
                             "--no-sim-state"]
                        + _env_args([("SMOOTH", "--smooth"),
                                     ("FREEZE", "--freeze")]),
                        output="screen"),
-        ExecuteProcess(cmd=[sys.executable, str(HERE / "arkit_receiver.py")]
+        ExecuteProcess(cmd=[sys.executable, "-m", "elrobot.nodes.arkit_receiver"]
                        + _env_args([("SCALE", "--scale")])
                        + ([] if os.environ.get("ORIENT", "1") != "0"
                           else ["--no-orient"]),
