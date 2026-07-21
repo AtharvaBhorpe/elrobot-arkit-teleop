@@ -352,7 +352,7 @@ uncalibrated work (M0, M1b) must pass `normalize=False`.
 |---|---|---|
 | M0 | Bus probe — `sync_read`/`sync_write` rate, desync check | ✅ **PASSED 2026-07-21.** p50 1.34 ms read / 0.32 ms write, 0 desync. `scripts/m0_bus_probe.py` |
 | M1a | LeRobot calibration | ✅ **PASSED 2026-07-21.** All 8 within −3% of URDF spans. `scripts/m1a_calibrate.py` |
-| M1b | URDF↔tick offset/sign table | ✅ **CLOSED 2026-07-21** after TWO sign fixes (joints 2 and 3 — see Incident). All signs now rest on direct slider-vs-hand tests (2/3/5/6/7) or strong evidence (1: observed swing direction; 4: 26.8 cm FK sensitivity). Tools: `verify_table.py`, `watch_ticks.py` |
+| M1b | URDF↔tick offset/sign table | ✅ **CLOSED 2026-07-21.** All 7 signs verified by direct slider-vs-hand tests, after TWO sign fixes (joints 2 and 3 — see Incident). Offsets FK-corroborated at a measured pose. Tools: `verify_table.py`, `watch_ticks.py` |
 | M2 | Receiver + IK + viewer, no hardware | ✅ **PASSED 2026-07-21, live.** Phone drives the model accurately (translation + rotation) after the axis-map retune; 60 pkt/s handled; gripper latch confirmed in logs (gear rotation is the rviz indicator — jaws are stripped from the viz model). Synthetic-phone regression: `scripts/test_m2_pipeline.py` |
 | M3 | Driver node, position-only, hard velocity clamp | arm tracks phone safely |
 | M4 | Full 6-DOF pose + gripper | pick-and-place |
