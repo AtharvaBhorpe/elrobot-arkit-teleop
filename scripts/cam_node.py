@@ -17,16 +17,19 @@ from sensor_msgs.msg import Image
 class CamNode(Node):
     def __init__(self, args):
         super().__init__(args.name)
-        self.cap = cv2.VideoCapture(args.device)
+        # MJPG must be requested AT OPEN, not after: OpenCV starts the stream
+        # during open with the default uncompressed YUYV (~147 Mbps at
+        # 640x480@30), and two of those exhaust a USB2 controller's
+        # isochronous budget - the second camera dies with
+        # VIDIOC_STREAMON: No space left on device.
+        self.cap = cv2.VideoCapture(args.device, cv2.CAP_V4L2, [
+            cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"),
+            cv2.CAP_PROP_FRAME_WIDTH, args.width,
+            cv2.CAP_PROP_FRAME_HEIGHT, args.height,
+            cv2.CAP_PROP_FPS, int(args.fps),
+        ])
         if not self.cap.isOpened():
             raise SystemExit(f"cannot open {args.device}")
-        # MJPG, not the default uncompressed YUYV: two uncompressed 640x480@30
-        # streams (~147 Mbps each) exceed a USB2 hub's isochronous budget and
-        # the second camera opens but never delivers frames.
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
-        self.cap.set(cv2.CAP_PROP_FPS, args.fps)
         self.pub = self.create_publisher(Image, args.topic, 1)
         self.frame_id = args.topic.strip("/").split("/")[0]
         self.create_timer(1.0 / args.fps, self._tick)
