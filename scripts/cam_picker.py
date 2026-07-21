@@ -46,6 +46,14 @@ class Picker:
         self.label.pack(fill="both", expand=True)
         self.cap = None
         self.root.after(33, self.tick)
+        self.root.after(2000, self.rescan)
+
+    def rescan(self):
+        """Hot-plug support: refresh the device list every 2 s."""
+        devs = sorted(glob.glob("/dev/video*"))
+        if list(self.combo["values"]) != devs:
+            self.combo["values"] = devs  # keeps the current selection
+        self.root.after(2000, self.rescan)
 
     def select(self, _=None):
         if self.cap is not None:
