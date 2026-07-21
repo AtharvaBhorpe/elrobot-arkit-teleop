@@ -74,14 +74,19 @@ FREEZE= GRIP_LOAD_THRESH= GRIP_SQUEEZE= Z_MIN= R_MAX= RVIZ=0`.
 ## Repository map
 
 ```
-src/elrobot/    the package: control/ nodes/ calibration/ tools/
-launch/ config/  ros2 launch files, rviz config
-tests/          offline suites (pixi run test)
-calibration/    servo tick ↔ URDF radian tables (sacred)
-docs/           real URDF (kinematic truth), vendored meshes, design spec
-data/           episodes, bags, derived viz meshes (gitignored)
-tasks/          current implementation plan and todo
-AGENTS.md       conventions + the hard rules, each earned by an incident
+src/elrobot/
+├── nodes/        the three ROS 2 nodes (driver, ik, receiver) + cams + recorder
+├── control/      cartesian_ik — DLS servo IK, task-priority frozen-joint modes
+├── calibration/  guided procedures: bus probe, M1a/M1b, FK verification
+└── tools/        watch_ticks, cam_picker, nudge, viz-URDF generator
+launch/           ros2 launch files (m3 / jog / cams / view / m2)
+config/           view.rviz — edit this file to add displays, never rviz "Add Display"
+tests/            offline suites, no hardware needed (pixi run test)
+calibration/      servo tick ↔ URDF radian tables — sacred, hook-protected
+docs/             real URDF (kinematic truth), vendored meshes, design spec
+data/             episodes, bags, derived viz meshes (gitignored)
+tasks/            implementation plan + todo
+AGENTS.md         conventions + hard rules, each earned by an incident
 ```
 
 The full design rationale and decision history:

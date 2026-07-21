@@ -39,41 +39,50 @@ lerobot = { git = "https://github.com/huggingface/lerobot.git", extras = ["feete
 # this repo itself, importable as `elrobot.*` everywhere (nodes, launches, tests)
 elrobot = { path = ".", editable = true }
 
+# ── gates — no hardware needed ─────────────────────────────────────────
+
 [tasks]
-# prove-env: the M0/M2 prerequisite gate — all four stacks import in one process
+# all four stacks import in one process (the M0/M2 prerequisite gate)
 prove-env = "python -m elrobot.tools.prove_env"
-# test: every offline suite (stub bus + fake phone + IK self-test + dataset)
+# every offline suite: stub-bus driver safety, IK self-test, dataset, fake-phone pipeline
 test = "python tests/test_driver_safety.py && python -m elrobot.control.cartesian_ik && python tests/test_recorder.py && python tests/test_m2_pipeline.py"
 lint = "ruff check src/ tests/ launch/"
-# ticks: live tick/angle/load monitor; also RELEASES TORQUE (arm goes limp)
-ticks = "python -m elrobot.tools.watch_ticks"
-# view: URDF in rviz2 with joint sliders (regenerates viz URDF first)
-view = "python -m elrobot.tools.make_viz_urdf && ros2 launch launch/view.launch.py"
-# m2: phone (ZIG SIM PRO -> UDP :50000) drives the model in rviz2, no hardware
-m2 = "python -m elrobot.tools.make_viz_urdf && ros2 launch launch/m2.launch.py"
-# m3-arm: phone drives the REAL arm (driver + ik --no-sim-state + receiver)
+
+# ── drive the REAL arm ─────────────────────────────────────────────────
+
+# phone teleop, full 7+1 DoF (driver + ik + receiver; regenerates viz URDF first)
 m3-arm = "python -m elrobot.tools.make_viz_urdf && ros2 launch launch/m3.launch.py"
-# m3-arm5: SO-101-style 5+1 DoF - joints 3 and 5 frozen at their start
-# pose. Task-priority servo: position EXACT, wrist pitch/roll tracked in
-# position's null space, yaw follows the arm (5 joints cannot yaw freely)
-m3-arm5 = "python -m elrobot.tools.make_viz_urdf && FREEZE=rev_motor_03,rev_motor_05 ros2 launch launch/m3.launch.py"
-# m3-arm6: 6+1 DoF with FULL orientation - joint 3 frozen (a redundant
-# pitch). NOT joint 5: without that roll the 6-joint Jacobian is
-# near-singular (sigma_min 1e-4) and even position tracking stalls 37 mm
-# short - 6-DoF control on this arm needs both rolls.
+# 6+1 DoF, full orientation — joint 3 (a redundant pitch) frozen. NOT joint 5:
+# without that roll the Jacobian goes near-singular (sigma_min ~1e-4) and even
+# position tracking stalls 37 mm short — 6-DoF control here needs both rolls.
 m3-arm6 = "python -m elrobot.tools.make_viz_urdf && FREEZE=rev_motor_03 ros2 launch launch/m3.launch.py"
-# jog: sliders drive the REAL arm through the driver; sliders seed from the
-# arm's current pose (falls back to zero/neutral if the pre-launch read fails)
+# SO-101-style 5+1 DoF — joints 3 and 5 frozen at their start pose. Task-priority
+# servo: position EXACT, wrist pitch/roll in position's null space, yaw follows
+# the arm (5 joints cannot yaw freely).
+m3-arm5 = "python -m elrobot.tools.make_viz_urdf && FREEZE=rev_motor_03,rev_motor_05 ros2 launch launch/m3.launch.py"
+# slider GUI drives the arm; sliders seed from the arm's current pose
 jog = "python -m elrobot.tools.make_viz_urdf && ros2 launch launch/jog.launch.py"
-# cams: wrist + external camera nodes (WRIST_DEV / EXT_DEV env to pick devices)
-cams = "ros2 launch launch/cams.launch.py"
-# campick: GUI dropdown of /dev/video* with live feed - identify your cameras
-campick = "python -m elrobot.tools.cam_picker"
-# record: episode recorder -> LeRobotDataset (own terminal; ENTER starts/stops)
-record = "python -m elrobot.nodes.episode_recorder"
-# rqt-cam: camera feed viewer (pick topic from its dropdown)
-rqt-cam = "env QT_IM_MODULE=compose QT_IM_MODULES= QT_QPA_PLATFORMTHEME= ros2 run rqt_image_view rqt_image_view"
-# bridge: foxglove websocket - connect Foxglove Studio to ws://localhost:8765
+# live tick/angle/load monitor; also RELEASES TORQUE (arm goes limp — support it)
+ticks = "python -m elrobot.tools.watch_ticks"
+
+# ── visualization only — no hardware ───────────────────────────────────
+
+# URDF in rviz2 with joint sliders
+view = "python -m elrobot.tools.make_viz_urdf && ros2 launch launch/view.launch.py"
+# phone (ZIG SIM PRO -> UDP :50000) drives the model in rviz2
+m2 = "python -m elrobot.tools.make_viz_urdf && ros2 launch launch/m2.launch.py"
+# foxglove websocket — connect Foxglove Studio to ws://localhost:8765
 bridge = "ros2 run foxglove_bridge foxglove_bridge"
-# bag: everything -> mcap rosbag under data/bags/ (Ctrl-C to stop)
+
+# ── cameras & recording ────────────────────────────────────────────────
+
+# wrist + external camera nodes (WRIST_DEV / EXT_DEV env to pick devices)
+cams = "ros2 launch launch/cams.launch.py"
+# GUI dropdown of /dev/video* with live feed — identify your cameras
+campick = "python -m elrobot.tools.cam_picker"
+# camera feed viewer (pick topic from its dropdown)
+rqt-cam = "env QT_IM_MODULE=compose QT_IM_MODULES= QT_QPA_PLATFORMTHEME= ros2 run rqt_image_view rqt_image_view"
+# episode recorder -> LeRobotDataset (own terminal; ENTER starts/stops)
+record = "python -m elrobot.nodes.episode_recorder"
+# everything -> mcap rosbag under data/bags/ (Ctrl-C to stop)
 bag = "ros2 bag record -s mcap -o data/bags/$(date +%Y%m%d_%H%M%S) /joint_states /joint_command /target_pose /gripper_command /wrist_cam/image /ext_cam/image /tf /tf_static"
