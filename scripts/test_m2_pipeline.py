@@ -92,8 +92,9 @@ def main():
         for i in range(1, 101):
             send([0.0, 0.25 * i / 100, 0.0], 1)
             time.sleep(0.02)
-        # keep streaming the final pose while the servo settles
-        for _ in range(75):
+        # keep streaming the final pose while the servo settles (kp=2 ->
+        # ~0.5 s time constant; 3 s leaves <0.3% of the transient)
+        for _ in range(150):
             send([0.0, 0.25, 0.0], 1)
             time.sleep(0.02)
 

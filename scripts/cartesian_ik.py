@@ -103,10 +103,16 @@ class CartesianServoIK:
                                      self.ee_id, pin.LOCAL)
         Ja = J[:, : self.n_arm]
 
-        manip = float(np.sqrt(max(np.linalg.det(Ja @ Ja.T), 0.0)))
+        # Singularity guard on sigma_min, the spec's verified criterion
+        # (13.9% of the workspace has sigma_min < 0.01). The Franka port used
+        # sqrt(det(J J^T)) -- the product of all 6 singular values -- which for
+        # this short-linked arm is ~1e-5 at GENERIC poses, so a 1e-2 threshold
+        # kept damping boosted 10x everywhere and crippled the servo.
+        sigma_min = float(np.linalg.svd(Ja, compute_uv=False)[-1])
         damp = self.damping
-        if manip < self.sing_threshold:
-            damp *= min(self.sing_threshold / (manip + 1e-9), self.max_sing_boost)
+        if sigma_min < self.sing_threshold:
+            damp *= min(self.sing_threshold / (sigma_min + 1e-9),
+                        self.max_sing_boost)
 
         dq = Ja.T @ np.linalg.solve(Ja @ Ja.T + damp * np.eye(6), twist)
         dq = np.clip(dq, -self.max_joint_vel, self.max_joint_vel)

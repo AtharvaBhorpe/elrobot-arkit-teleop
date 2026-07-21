@@ -113,11 +113,20 @@ tap to grip, then move with one finger while carrying the object.
 
 ## Coordinate frames
 
-Axis remap from the Franka project (`ARKIT_TO_ROS`):
+Axis remap (`ARKIT_TO_ROS`), **retuned 2026-07-21 on the live phone run** for the
+actual operator stance — standing at the base, looking out along the arm (+Y),
+phone camera pointed at the robot:
 
-- device +Y → robot +Z
-- device −Z → robot +X
-- device −X → robot +Y
+- device +X (phone right) → robot +X (right)
+- device −Z (phone forward) → robot +Y (arm forward)
+- device +Y (phone up) → robot +Z (up)
+
+The Franka project's map had the operator rotated 90°: phone-right came out as
+robot-backward here. Rotations go through `C·R·Cᵀ`, so this same matrix puts the
+phone's screwdriver axis (camera direction) on the arm's length axis: roll the
+phone while pointing it at the robot and the gripper rolls clockwise-for-
+clockwise as seen from the base. The receiver logs the dominant rotation axis
+(1 Hz, ≥15°) for future axis debugging.
 
 Orientation is applied relative to the clutch-engagement pose and remapped to the base
 frame as `C · (R_now · R_refᵀ) · Cᵀ`.

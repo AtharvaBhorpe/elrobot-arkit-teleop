@@ -33,14 +33,23 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cartesian_ik import (  # noqa: E402
-    ARM_JOINTS, GRIPPER_CLOSED, GRIPPER_JOINT, GRIPPER_OPEN, CartesianServoIK,
+    ARM_JOINTS, GRIPPER_CLOSED, GRIPPER_OPEN, CartesianServoIK,
 )
 
-# ARKit world (RH, +Y up, camera looks -Z) -> robot base (+Z up):
-# device +Y -> robot +Z, device -Z -> robot +X, device -X -> robot +Y.
+# ARKit world (RH, +Y up, camera looks -Z) -> robot base (+Z up, arm along +Y).
+# Operator stance: standing at the base, looking out along the arm (+Y),
+# phone camera pointing at the robot:
+#   phone right   (+X arkit) -> robot right   (+X)
+#   phone forward (-Z arkit) -> arm forward   (+Y)
+#   phone up      (+Y arkit) -> robot up      (+Z)
+# Rotations go through C.R.C^T, so the phone's screwdriver axis (camera, -Z)
+# lands on the arm's length axis (+Y): roll the phone while pointing it at the
+# robot and the gripper rolls the same way, clockwise-for-clockwise as seen
+# from the base. (The Franka project's map had the operator 90 deg around --
+# phone-right came out as robot-backward here.)
 ARKIT_TO_ROS = np.array([
+    [1.0, 0.0, 0.0],
     [0.0, 0.0, -1.0],
-    [-1.0, 0.0, 0.0],
     [0.0, 1.0, 0.0],
 ])
 
@@ -93,6 +102,23 @@ class ARKitReceiver(Node):
                 and time.monotonic() - self._last_rx > DEADMAN_S):
             self.moving = False
             self.get_logger().warning("stream deadman: clutch released")
+
+    def _log_rot_axis(self, d_robot, _state=[0.0]):
+        """1 Hz: dominant rotation axis in the base frame, for axis debugging.
+        X=right, Y=arm-forward (roll axis), Z=up (yaw axis)."""
+        now = time.monotonic()
+        if now - _state[0] < 1.0:
+            return
+        aa = pin.AngleAxis(d_robot)
+        deg = np.degrees(aa.angle)
+        if deg < 15.0:
+            return
+        _state[0] = now
+        ax = aa.axis
+        dom = "XYZ"[int(np.argmax(np.abs(ax)))]
+        self.get_logger().info(
+            f"phone rotation: {deg:.0f} deg about "
+            f"[{ax[0]:+.2f} {ax[1]:+.2f} {ax[2]:+.2f}] (mostly {dom})")
 
     def _quat_to_R(self, q):
         if self.quat_order == "xyzw":
@@ -177,6 +203,7 @@ class ARKitReceiver(Node):
                 d_arkit = self._quat_to_R(rot) @ self.phone_rot_ref.T
                 d_robot = self.C @ d_arkit @ self.C.T
                 target_R = d_robot @ self.robot_ref.rotation
+                self._log_rot_axis(d_robot)
             else:
                 target_R = self.robot_ref.rotation
             quat = pin.Quaternion(target_R)
