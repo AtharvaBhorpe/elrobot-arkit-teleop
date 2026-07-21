@@ -41,9 +41,27 @@ class IKNode(Node):
         self.cmd_pub = self.create_publisher(JointState, "/joint_command", 1)
         self.state_pub = (self.create_publisher(JointState, "/joint_states", 1)
                           if args.sim_state else None)
+        # M3 (driver present): seed our q from the REAL arm once, or the first
+        # command would order a move to URDF neutral from wherever the arm is.
+        self.seeded = args.sim_state  # sim mode needs no seed
+        if not self.seeded:
+            self.qidx = {n: self.ik.model.joints[self.ik.model.getJointId(n)].idx_q
+                         for n in ARM_JOINTS}
+            self.create_subscription(JointState, "/joint_states", self._on_state, 1)
         self.create_timer(self.dt, self._tick)
         self.get_logger().info(
             f"ik up: {args.rate:.0f} Hz, sim_state={'on' if args.sim_state else 'off'}")
+
+    def _on_state(self, msg: JointState):
+        if self.seeded:
+            return
+        q = self.ik.q.copy()
+        for name, pos in zip(msg.name, msg.position):
+            if name in self.qidx:
+                q[self.qidx[name]] = pos
+        self.ik.set_q(q)
+        self.seeded = True
+        self.get_logger().info("ik seeded from real /joint_states")
 
     def _on_target(self, msg: PoseStamped):
         p = msg.pose.position
