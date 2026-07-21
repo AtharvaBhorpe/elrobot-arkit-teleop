@@ -145,7 +145,7 @@ def add_camera(root):
 REBASED = Path("data/viz_meshes")  # derived, gitignored, regenerated
 
 
-def _write_dae(dst, tris):
+def _write_dae(dst, tris, rgb=(0.8, 0.8, 0.8)):
     """Minimal COLLADA with explicit Z_UP, meters, indexed vertices.
 
     tris: (T, 3, 3) float array, link-local meters. Normals are recomputed
@@ -172,6 +172,12 @@ def _write_dae(dst, tris):
     dst.write_text(f"""<?xml version="1.0" encoding="utf-8"?>
 <COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
   <asset><unit name="meter" meter="1"/><up_axis>Z_UP</up_axis></asset>
+  <library_effects><effect id="fx"><profile_COMMON><technique sid="t">
+    <phong><diffuse><color>{rgb[0]} {rgb[1]} {rgb[2]} 1</color></diffuse>
+    <specular><color>0.2 0.2 0.2 1</color></specular>
+    <shininess><float>20</float></shininess></phong>
+  </technique></profile_COMMON></effect></library_effects>
+  <library_materials><material id="mat"><instance_effect url="#fx"/></material></library_materials>
   <library_geometries><geometry id="g"><mesh>
     <source id="pos">
       <float_array id="pa" count="{len(verts) * 3}">{arr(verts)}</float_array>
@@ -186,14 +192,16 @@ def _write_dae(dst, tris):
         <param name="Z" type="float"/></accessor></technique_common>
     </source>
     <vertices id="v"><input semantic="POSITION" source="#pos"/></vertices>
-    <triangles count="{T}">
+    <triangles count="{T}" material="msym">
       <input semantic="VERTEX" source="#v" offset="0"/>
       <input semantic="NORMAL" source="#nor" offset="1"/>
       <p>{" ".join(map(str, idx))}</p>
     </triangles>
   </mesh></geometry></library_geometries>
   <library_visual_scenes><visual_scene id="s">
-    <node id="n"><instance_geometry url="#g"/></node>
+    <node id="n"><instance_geometry url="#g"><bind_material>
+      <technique_common><instance_material symbol="msym" target="#mat"/></technique_common>
+    </bind_material></instance_geometry></node>
   </visual_scene></library_visual_scenes>
   <scene><instance_visual_scene url="#s"/></scene>
 </COLLADA>
@@ -248,7 +256,11 @@ def rebase_meshes(root):
                                     ).reshape(cnt, 50)
             tris = raw[:, 12:48].copy().view("<f4").reshape(-1, 3)
             verts = (tris.astype(np.float64) * scale) @ R.T + xyz  # link, m
-            _write_dae(dst, verts.reshape(-1, 3, 3))
+            name = link.get("name")
+            rgb = ((0.08, 0.08, 0.08) if name.startswith("ST3215")
+                   else (0.15, 0.15, 0.15) if name == "camera_mount"
+                   else (0.95, 0.45, 0.10))  # printed orange
+            _write_dae(dst, verts.reshape(-1, 3, 3), rgb)
         mesh.set("filename", dst.resolve().as_uri())
         if mesh.get("scale"):
             del mesh.attrib["scale"]
