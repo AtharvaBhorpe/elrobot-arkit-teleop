@@ -146,12 +146,14 @@ class ElrobotDriver(Node):
         self.grip_squeeze = args.grip_squeeze
         self.grasp_goal = None
         self.grasp_hits = 0
+        self.prev_grip_phys = None  # set from first present read below
 
         present = self.bus.sync_read("Present_Position", ALL_JOINTS,
                                      normalize=False)
         self.slew_pos = {n: float(v) for n, v in present.items()}  # float acc
         self.last_sent = dict(present)   # last INTEGER goal written
         self.last_present = dict(present)  # physical pose, <=1 cycle stale
+        self.prev_grip_phys = present[GRIPPER_JOINT]
         self.target = None               # ticks; None until first command
         self.frozen = False
         self.last_cmd_time = None
@@ -256,6 +258,8 @@ class ElrobotDriver(Node):
                 self.grasp_hits = 0
                 self.get_logger().info("grasp released")
             return
+        speed = abs(phys - self.prev_grip_phys)  # ticks per cycle, physical
+        self.prev_grip_phys = phys
         if (cmd - phys) * self.close_dir <= 12:  # servo not pushing closed
             self.grasp_hits = 0
             return
@@ -267,7 +271,13 @@ class ElrobotDriver(Node):
             self._recover_bus()
             return
         mag = abs(raw)
-        self.grasp_hits = self.grasp_hits + 1 if mag >= self.grip_thresh else 0
+        # Stall = high effort AND no motion. Load alone false-triggers:
+        # chasing a fast command through free air costs ~17% acceleration
+        # load (observed), indistinguishable from contact by effort only.
+        # A blocked jaw is the one that stops moving.
+        stalled = speed <= 3
+        self.grasp_hits = (self.grasp_hits + 1
+                           if stalled and mag >= self.grip_thresh else 0)
         if self.grasp_hits >= 3:
             t = self.conv.t[g]
             lo, hi = sorted((t["open_ticks"], t["closed_ticks"]))

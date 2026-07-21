@@ -187,7 +187,17 @@ def main():
     for _ in range(30):    # pushing, but NO load: must not latch
         d._tick()
     assert d.grasp_goal is None, "must not latch without load"
-    d.bus.load[GRIPPER_JOINT] = -200            # jaws stalled on something
+    # MOVING jaw under high load = acceleration transient, NOT contact
+    # (field-observed: fast slider drags cost ~17% load in free air and
+    # false-latched). High load only counts when the jaw has stopped.
+    d.bus.load[GRIPPER_JOINT] = -200
+    for _ in range(30):
+        d.bus.present[GRIPPER_JOINT] += d.close_dir * 10   # still moving
+        d.last_present[GRIPPER_JOINT] = d.bus.present[GRIPPER_JOINT]
+        d._on_cmd(cmd({n: 0.0 for n in ARM_JOINTS}, grip=GRIPPER_CLOSED))
+        d._tick()
+    assert d.grasp_goal is None, "must not latch while the jaw still moves"
+    g_open = d.bus.present[GRIPPER_JOINT]       # jaws now stalled HERE
     for _ in range(5):
         d._on_cmd(cmd({n: 0.0 for n in ARM_JOINTS}, grip=GRIPPER_CLOSED))
         d._tick()
