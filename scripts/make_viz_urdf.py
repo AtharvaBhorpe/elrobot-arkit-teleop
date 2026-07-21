@@ -87,7 +87,7 @@ def fix_jaw_frames(root):
 # bracket base center on the top plate, in the Gripper_Base link frame
 # (x right, y toward jaws, z up, meters); yaw 90 deg turns the bracket's
 # camera direction onto the arm axis. Nudge xyz until rviz matches the photo.
-CAM_MOUNT_XYZ = (0.0, 0.013, 0.0197)  # field-tuned: -4 mm z, +1 mm toward jaws
+CAM_MOUNT_XYZ = (0.002, 0.013, 0.0177)  # field-tuned iteratively against the real bracket
 CAM_MOUNT_RPY = (0.0, 0.0, 1.5708)
 # Optical frame: derived from the mount STL - camera plate normal
 # (0.91, 0, -0.42) in mount-local frame (24.8 deg below horizontal), lens
