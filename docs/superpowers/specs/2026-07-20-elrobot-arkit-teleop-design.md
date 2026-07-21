@@ -234,6 +234,14 @@ gate or the watch_ticks direction test is authoritative.** A crude first
 measurement ("iPhone units") had wrongly passed joint 2 — measure verification
 poses with a real tape.
 
+**Joint 3 was ALSO flipped**, caught later by a direct slider-vs-hand comparison.
+Second lesson: an FK fit only rules on joints that are *bent* in the measured
+poses — joint 3 sat within 5° of zero in both verification poses (flip
+sensitivity 4.1 cm, under measurement noise), so its earlier "cleared by
+flip-fit" status was overclaimed. The slider-vs-hand direction test
+(`pixi run view` + `watch_ticks.py`, ~30 s per joint) is the gold standard;
+it caught both flips that FK-with-crude-tape passed.
+
 ## Verified findings
 
 Established by execution against the extracted URDF (Pinocchio 4.1.0), not assumed.
@@ -344,7 +352,7 @@ uncalibrated work (M0, M1b) must pass `normalize=False`.
 |---|---|---|
 | M0 | Bus probe — `sync_read`/`sync_write` rate, desync check | ✅ **PASSED 2026-07-21.** p50 1.34 ms read / 0.32 ms write, 0 desync. `scripts/m0_bus_probe.py` |
 | M1a | LeRobot calibration | ✅ **PASSED 2026-07-21.** All 8 within −3% of URDF spans. `scripts/m1a_calibrate.py` |
-| M1b | URDF↔tick offset/sign table | ✅ **FULLY CLOSED 2026-07-21.** All 7 signs verified: 1/3/4 by FK flip-fit across two poses, 2 fixed then direction-tested (see Incident), 6 direction-tested, 5/7 by slider-vs-hand roll comparison. Tools: `verify_table.py`, `watch_ticks.py` |
+| M1b | URDF↔tick offset/sign table | ✅ **CLOSED 2026-07-21** after TWO sign fixes (joints 2 and 3 — see Incident). All signs now rest on direct slider-vs-hand tests (2/3/5/6/7) or strong evidence (1: observed swing direction; 4: 26.8 cm FK sensitivity). Tools: `verify_table.py`, `watch_ticks.py` |
 | M2 | Receiver + IK + viewer, no hardware | ✅ **PASSED 2026-07-21, live.** Phone drives the model accurately (translation + rotation) after the axis-map retune; 60 pkt/s handled; gripper latch confirmed in logs (gear rotation is the rviz indicator — jaws are stripped from the viz model). Synthetic-phone regression: `scripts/test_m2_pipeline.py` |
 | M3 | Driver node, position-only, hard velocity clamp | arm tracks phone safely |
 | M4 | Full 6-DOF pose + gripper | pick-and-place |

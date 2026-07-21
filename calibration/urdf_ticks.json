@@ -9,7 +9,7 @@
   },
   "rev_motor_03": {
     "offset": 2073.5,
-    "sign": -1
+    "sign": 1
   },
   "rev_motor_04": {
     "offset": 2085.5,
