@@ -1,8 +1,8 @@
 # ARKit Phone Teleoperation of the Elrobot Arm — Design
 
 **Date:** 2026-07-20 (updated 2026-07-21)
-**Status:** M0, M1a, M1b done (joints 1/6 pending one bent-pose check; 5/7 roll signs
-confirmed in M2). Next: M2 — receiver + IK + viewer, no hardware.
+**Status:** M0–M2 all passed; M1b fully closed (all 7 signs verified, joint 2 fixed).
+Next: M3 — `elrobot_driver`, first powered motion.
 
 ## Goal
 
@@ -344,7 +344,7 @@ uncalibrated work (M0, M1b) must pass `normalize=False`.
 |---|---|---|
 | M0 | Bus probe — `sync_read`/`sync_write` rate, desync check | ✅ **PASSED 2026-07-21.** p50 1.34 ms read / 0.32 ms write, 0 desync. `scripts/m0_bus_probe.py` |
 | M1a | LeRobot calibration | ✅ **PASSED 2026-07-21.** All 8 within −3% of URDF spans. `scripts/m1a_calibrate.py` |
-| M1b | URDF↔tick offset/sign table | ✅ **PASSED 2026-07-21** for joints 2/3/4 (FK vs tape, ~1.5 cm). Joints 1/6: one bent-pose `verify_table.py` run pending; 5/7: confirmed visually in M2 |
+| M1b | URDF↔tick offset/sign table | ✅ **FULLY CLOSED 2026-07-21.** All 7 signs verified: 1/3/4 by FK flip-fit across two poses, 2 fixed then direction-tested (see Incident), 6 direction-tested, 5/7 by slider-vs-hand roll comparison. Tools: `verify_table.py`, `watch_ticks.py` |
 | M2 | Receiver + IK + viewer, no hardware | ✅ **PASSED 2026-07-21, live.** Phone drives the model accurately (translation + rotation) after the axis-map retune; 60 pkt/s handled; gripper latch confirmed in logs (gear rotation is the rviz indicator — jaws are stripped from the viz model). Synthetic-phone regression: `scripts/test_m2_pipeline.py` |
 | M3 | Driver node, position-only, hard velocity clamp | arm tracks phone safely |
 | M4 | Full 6-DOF pose + gripper | pick-and-place |
