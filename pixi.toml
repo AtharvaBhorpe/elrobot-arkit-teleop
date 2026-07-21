@@ -19,6 +19,8 @@ ros-jazzy-xacro = "*"
 ros-jazzy-rosbag2-storage-mcap = "*"
 # camera feed viewer (sturdier than rviz Image display for quick checks)
 ros-jazzy-rqt-image-view = "*"
+# foxglove studio bridge (websocket on :8765) - crash-free alternative GUI
+ros-jazzy-foxglove-bridge = "*"
 # Kinematics-only Pinocchio for the IK layer (spec: nq=10, meshes not required)
 pinocchio = "*"
 # build/dev basics
@@ -54,5 +56,7 @@ campick = "python scripts/cam_picker.py"
 record = "python scripts/episode_recorder.py"
 # rqt-cam: camera feed viewer (pick topic from its dropdown)
 rqt-cam = "env QT_IM_MODULE=compose QT_IM_MODULES= QT_QPA_PLATFORMTHEME= ros2 run rqt_image_view rqt_image_view"
+# bridge: foxglove websocket - connect Foxglove Studio to ws://localhost:8765
+bridge = "ros2 run foxglove_bridge foxglove_bridge"
 # bag: everything -> mcap rosbag under data/bags/ (Ctrl-C to stop)
 bag = "ros2 bag record -s mcap -o data/bags/$(date +%Y%m%d_%H%M%S) /joint_states /joint_command /target_pose /gripper_command /wrist_cam/image /ext_cam/image /tf /tf_static"
