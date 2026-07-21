@@ -19,7 +19,11 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from cartesian_ik import ARM_JOINTS, GRIPPER_CLOSED, GRIPPER_JOINT  # noqa: E402
 from elrobot_driver import (  # noqa: E402
-    Converter, ElrobotDriver, SafetyGate, TICKS_PER_RAD, build_args,
+    TICKS_PER_RAD,
+    Converter,
+    ElrobotDriver,
+    SafetyGate,
+    build_args,
 )
 
 

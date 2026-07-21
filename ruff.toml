@@ -1,0 +1,9 @@
+# Lint + format for the whole repo. Line length 100: the hardware comments
+# earn their width. E402: imports after os.environ setup lines are a
+# deliberate pattern (HF_HUB_OFFLINE / ROS_DOMAIN_ID must precede imports).
+line-length = 100
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E402", "E741"]

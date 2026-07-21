@@ -8,6 +8,7 @@ dataset back and checks frame count, shapes, and that the values round-trip.
 """
 
 import os
+
 os.environ.setdefault("ROS_DOMAIN_ID", "77")  # NEVER touch a live session's DDS graph
 os.environ.setdefault("HF_HUB_OFFLINE", "1")  # local datasets, never the network
 
@@ -15,7 +16,6 @@ import shutil
 import subprocess
 import sys
 import threading
-import time
 from pathlib import Path
 
 import numpy as np

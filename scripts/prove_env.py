@@ -28,7 +28,8 @@ def main() -> int:
         _ok("numpy", lambda: __import__("numpy").__version__),
         _ok("pinocchio", lambda: __import__("pinocchio").__version__),
         _ok("torch", lambda: __import__("torch").__version__),
-        _ok("lerobot", lambda: __import__("importlib.metadata", fromlist=["version"]).version("lerobot")),
+        _ok("lerobot", lambda: __import__("importlib.metadata",
+                                          fromlist=["version"]).version("lerobot")),
     ]
 
     # Surface the Feetech bus API without touching hardware: does connect()

@@ -42,7 +42,11 @@ from sensor_msgs.msg import JointState
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cartesian_ik import (  # noqa: E402
-    ARM_JOINTS, GRIPPER_CLOSED, GRIPPER_JOINT, JAW_MIMIC, TCP_FRAME,
+    ARM_JOINTS,
+    GRIPPER_CLOSED,
+    GRIPPER_JOINT,
+    JAW_MIMIC,
+    TCP_FRAME,
 )
 
 TICKS_PER_RAD = 651.9

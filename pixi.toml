@@ -25,6 +25,7 @@ ros-jazzy-foxglove-bridge = "*"
 pinocchio = "*"
 # build/dev basics
 pip = "*"
+ruff = "*"
 # lerobot pins these tighter than conda's defaults — pin conda into the overlap
 setuptools = ">=71,<81"
 packaging = ">=24.2,<26"
@@ -39,6 +40,9 @@ lerobot = { git = "https://github.com/huggingface/lerobot.git", extras = ["feete
 [tasks]
 # prove-env: the M0/M2 prerequisite gate — all four stacks import in one process
 prove-env = "python scripts/prove_env.py"
+# test: every offline suite (stub bus + fake phone + IK self-test + dataset)
+test = "python scripts/test_driver_safety.py && python scripts/cartesian_ik.py && python scripts/test_recorder.py && python scripts/test_m2_pipeline.py"
+lint = "ruff check scripts/"
 # view: URDF in rviz2 with joint sliders (regenerates viz URDF first)
 view = "python scripts/make_viz_urdf.py && ros2 launch scripts/view.launch.py"
 # m2: phone (ZIG SIM PRO -> UDP :50000) drives the model in rviz2, no hardware

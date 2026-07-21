@@ -27,7 +27,11 @@ from std_msgs.msg import Float64
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cartesian_ik import (  # noqa: E402
-    ARM_JOINTS, GRIPPER_JOINT, GRIPPER_OPEN, JAW_MIMIC, CartesianServoIK,
+    ARM_JOINTS,
+    GRIPPER_JOINT,
+    GRIPPER_OPEN,
+    JAW_MIMIC,
+    CartesianServoIK,
 )
 
 
