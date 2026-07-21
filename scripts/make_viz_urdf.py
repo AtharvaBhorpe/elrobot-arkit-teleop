@@ -82,10 +82,71 @@ def fix_jaw_frames(root):
             el.set("xyz", " ".join(f"{v:.6f}" for v in vx + delta))
 
 
+# -- camera (Innomaker U20CAM-1080P on CameraMount_square_27mm) -----------
+# Mount pose on the gripper base, TUNE AGAINST THE REAL BRACKET: xyz is the
+# bracket base center on the top plate, in the Gripper_Base link frame
+# (x right, y toward jaws, z up, meters); yaw 90 deg turns the bracket's
+# camera direction onto the arm axis. Nudge xyz until rviz matches the photo.
+CAM_MOUNT_XYZ = (0.0, 0.012, 0.0237)
+CAM_MOUNT_RPY = (0.0, 0.0, 1.5708)
+# Optical frame: derived from the mount STL - camera plate normal
+# (0.91, 0, -0.42) in mount-local frame (24.8 deg below horizontal), lens
+# center ~10 mm out from the plate face centroid (-0.6, 0, 49.4) mm.
+CAM_OPTICAL_XYZ = (0.0085, 0.0, 0.0452)  # in camera_mount frame, meters
+# REP-103 optical: z = view direction, x = image right, y = image down.
+# Columns [x_opt y_opt z_opt] in mount frame; if the image appears rotated
+# 180 deg later, flip the signs of the x_opt and y_opt columns.
+CAM_OPTICAL_AXES = ((0, -0.42, 0.91), (-1, 0, 0), (0, -0.91, -0.42))  # rows
+
+
+def add_camera(root):
+    """camera_mount (bracket mesh) + camera_optical_frame, fixed joints.
+
+    Fixed joints need no joint states - robot_state_publisher broadcasts
+    their TF from the URDF alone. The U20CAM-1080P is a 120 deg FOV camera;
+    FOV lives in the CameraInfo pipeline, not the URDF.
+    """
+    import numpy as np
+    import pinocchio as pin
+
+    def make(tag, parent, **attrs):
+        el = ET.SubElement(parent, tag)
+        for k, v in attrs.items():
+            el.set(k, v)
+        return el
+
+    def fixed_joint(name, parent, child, xyz, rpy):
+        j = make("joint", root, name=name, type="fixed")
+        make("origin", j, xyz=" ".join(f"{v:.6f}" for v in xyz),
+             rpy=" ".join(f"{v:.6f}" for v in rpy))
+        make("parent", j, link=parent)
+        make("child", j, link=child)
+
+    mount = make("link", root, name="camera_mount")
+    v = make("visual", mount)
+    make("origin", v, xyz="0 0 0", rpy="0 0 0")
+    g = make("geometry", v)
+    make("mesh", g,
+         filename=(ASSETS / "CameraMount_square_27mm.stl").as_uri(),
+         scale="0.001 0.001 0.001")
+    mat = make("material", v, name="cam_black")
+    make("color", mat, rgba="0.15 0.15 0.15 1")
+    fixed_joint("camera_mount_joint", "Gripper_Base_v1_1", "camera_mount",
+                CAM_MOUNT_XYZ, CAM_MOUNT_RPY)
+
+    make("link", root, name="camera_optical_frame")
+    R = np.array(CAM_OPTICAL_AXES, dtype=float)
+    U, _, Vt = np.linalg.svd(R)  # orthonormalize the rounded axes
+    rpy = pin.rpy.matrixToRpy(U @ Vt)
+    fixed_joint("camera_optical_joint", "camera_mount",
+                "camera_optical_frame", CAM_OPTICAL_XYZ, rpy)
+
+
 def main():
     tree = ET.parse(SRC)
     root = tree.getroot()
     fix_jaw_frames(root)
+    add_camera(root)
 
     missing = []
     n_mesh = 0
