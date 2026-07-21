@@ -21,7 +21,8 @@ URDF = (HERE.parent / "docs" / "urdf_Elrobot_viz.urdf").read_text()
 # Conda Qt must not load the SYSTEM ibus input-method plugin (built against
 # a different Qt): heap corruption the moment a dialog opens - rviz2 died
 # with free(): invalid pointer. 'compose' is Qt's built-in IM, always safe.
-QT_SAFE_ENV = {"QT_IM_MODULE": "compose", "QT_IM_MODULES": ""}
+QT_SAFE_ENV = {"QT_IM_MODULE": "compose", "QT_IM_MODULES": "",
+               "QT_QPA_PLATFORMTHEME": ""}  # no system gtk3 theme plugin
 
 # Tuning knobs, passed as environment variables:
 #   ORIENT=0            position-only (phone rotation ignored; often calmer)

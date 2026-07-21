@@ -17,6 +17,8 @@ ros-jazzy-joint-state-publisher-gui = "*"
 ros-jazzy-xacro = "*"
 # mcap recording for ros2 bag
 ros-jazzy-rosbag2-storage-mcap = "*"
+# camera feed viewer (sturdier than rviz Image display for quick checks)
+ros-jazzy-rqt-image-view = "*"
 # Kinematics-only Pinocchio for the IK layer (spec: nq=10, meshes not required)
 pinocchio = "*"
 # build/dev basics
@@ -50,5 +52,7 @@ cams = "ros2 launch scripts/cams.launch.py"
 campick = "python scripts/cam_picker.py"
 # record: episode recorder -> LeRobotDataset (own terminal; ENTER starts/stops)
 record = "python scripts/episode_recorder.py"
+# rqt-cam: camera feed viewer (pick topic from its dropdown)
+rqt-cam = "env QT_IM_MODULE=compose QT_IM_MODULES= QT_QPA_PLATFORMTHEME= ros2 run rqt_image_view rqt_image_view"
 # bag: everything -> mcap rosbag under data/bags/ (Ctrl-C to stop)
 bag = "ros2 bag record -s mcap -o data/bags/$(date +%Y%m%d_%H%M%S) /joint_states /joint_command /target_pose /gripper_command /wrist_cam/image /ext_cam/image /tf /tf_static"
