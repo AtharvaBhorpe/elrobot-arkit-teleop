@@ -47,6 +47,11 @@ m2 = "python scripts/make_viz_urdf.py && ros2 launch scripts/m2.launch.py"
 m3-arm = "python scripts/make_viz_urdf.py && ros2 launch scripts/m3.launch.py"
 # m3-arm5: SO-101-style 5+1 DoF - joints 3 and 5 frozen at their start pose
 m3-arm5 = "python scripts/make_viz_urdf.py && FREEZE=rev_motor_03,rev_motor_05 ros2 launch scripts/m3.launch.py"
+# m3-arm6: 6+1 DoF with FULL orientation - joint 3 frozen (a redundant
+# pitch). NOT joint 5: without that roll the 6-joint Jacobian is
+# near-singular (sigma_min 1e-4) and even position tracking stalls 37 mm
+# short - 6-DoF control on this arm needs both rolls.
+m3-arm6 = "python scripts/make_viz_urdf.py && FREEZE=rev_motor_03 ros2 launch scripts/m3.launch.py"
 # jog: sliders drive the REAL arm through the driver; sliders seed from the
 # arm's current pose (falls back to zero/neutral if the pre-launch read fails)
 jog = "python scripts/make_viz_urdf.py && ros2 launch scripts/jog.launch.py"
