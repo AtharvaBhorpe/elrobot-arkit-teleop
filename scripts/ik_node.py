@@ -33,6 +33,7 @@ class IKNode(Node):
     def __init__(self, args):
         super().__init__("ik")
         self.ik = CartesianServoIK()
+        self.ik.q_ref = self.ik.arm_q()  # null-space anchor; re-set on seed
         self.target: pin.SE3 | None = None
         self.gripper = GRIPPER_OPEN
         self.dt = 1.0 / args.rate
@@ -63,6 +64,7 @@ class IKNode(Node):
             if name in self.qidx:
                 q[self.qidx[name]] = pos
         self.ik.set_q(q)
+        self.ik.q_ref = self.ik.arm_q()  # anchor the real starting posture
         self.seeded = True
         self.get_logger().info("ik seeded from real /joint_states")
 

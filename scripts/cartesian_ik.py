@@ -67,6 +67,8 @@ class CartesianServoIK:
         self.q_min = self.model.lowerPositionLimit
         self.q_max = self.model.upperPositionLimit
 
+        self.q_ref = None            # null-space posture anchor (see servo)
+        self.kp_posture = 0.5        # gentle: 1/s pull, null-space only
         self.kp_lin, self.kp_ang = kp_lin, kp_ang
         self.max_lin_vel, self.max_ang_vel = max_lin_vel, max_ang_vel
         self.max_joint_vel = max_joint_vel
@@ -108,13 +110,26 @@ class CartesianServoIK:
         # sqrt(det(J J^T)) -- the product of all 6 singular values -- which for
         # this short-linked arm is ~1e-5 at GENERIC poses, so a 1e-2 threshold
         # kept damping boosted 10x everywhere and crippled the servo.
-        sigma_min = float(np.linalg.svd(Ja, compute_uv=False)[-1])
+        _, S, Vt = np.linalg.svd(Ja, full_matrices=True)
+        sigma_min = float(S[-1])
         damp = self.damping
         if sigma_min < self.sing_threshold:
             damp *= min(self.sing_threshold / (sigma_min + 1e-9),
                         self.max_sing_boost)
 
         dq = Ja.T @ np.linalg.solve(Ja @ Ja.T + damp * np.eye(6), twist)
+
+        # Null-space posture anchor: the 7th DOF is task-redundant, and
+        # unanchored it wanders ("possessed elbow"). Pull gently toward the
+        # reference posture, projected through the EXACT orthogonal
+        # complement of the controllable task directions (sigma > threshold).
+        # A projector built from the damped pseudo-inverse is not exact and
+        # leaked the pull into the TCP (measured 6.4 mm of tracking offset).
+        if self.q_ref is not None:
+            Vr = Vt[: np.count_nonzero(S > self.sing_threshold)]
+            N = np.eye(self.n_arm) - Vr.T @ Vr
+            dq += N @ (self.kp_posture * (self.q_ref - self.q[: self.n_arm]))
+
         dq = np.clip(dq, -self.max_joint_vel, self.max_joint_vel)
 
         self.q[: self.n_arm] = np.clip(
@@ -151,4 +166,28 @@ if __name__ == "__main__":
     assert (ik.arm_q() >= lo).all() and (ik.arm_q() <= hi).all()
     print("final TCP :", np.round(final.translation, 4))
     print(f"pos error : {err*1000:.2f} mm, all joints within URDF limits")
+
+    # Null-space anchor mechanism test - the contract is exactly two-sided:
+    # with q_ref far from the current posture and the target pinned at the
+    # CURRENT TCP pose, the anchor must (a) visibly move the posture toward
+    # q_ref through the redundant DOF while (b) leaving the TCP untouched.
+    # (Long-horizon wander suppression is a hardware-feel property that a
+    # short simulation cannot reproduce - DLS is minimum-norm per step, so
+    # sim wander is noise-floor with or without the anchor.)
+    s = CartesianServoIK()
+    s.set_q(q0)
+    hold = s.ee_pose()
+    q_ref = q0[:7].copy()
+    q_ref[2] += 0.6  # ask for a very different elbow-ish posture
+    s.q_ref = q_ref
+    d0 = float(np.linalg.norm(s.arm_q() - q_ref))
+    for _ in range(2000):
+        s.servo(hold, dt)
+    d1 = float(np.linalg.norm(s.arm_q() - q_ref))
+    tcp_moved = float(np.linalg.norm(s.ee_pose().translation
+                                     - hold.translation))
+    print(f"null-space anchor: posture distance to q_ref {d0:.3f} -> "
+          f"{d1:.3f} rad while TCP moved {tcp_moved*1000:.2f} mm")
+    assert d1 < d0 - 0.05, "anchor did not move the posture toward q_ref"
+    assert tcp_moved < 3e-3, f"anchor disturbed the TCP: {tcp_moved*1000:.1f} mm"
     print("SELF-TEST PASSED")

@@ -7,6 +7,7 @@ the real arm) -> /joint_command -> elrobot_driver -> serial -> arm.
 The driver's sync_read publishes /joint_states, so rviz shows the REAL arm.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -28,6 +29,11 @@ def generate_launch_description():
                        output="screen"),
         ExecuteProcess(cmd=[sys.executable, str(HERE / "ik_node.py"),
                             "--no-sim-state"], output="screen"),
-        ExecuteProcess(cmd=[sys.executable, str(HERE / "arkit_receiver.py")],
+        # ORIENT=0 pixi run m3-arm -> position-only mode: TCP orientation
+        # frozen at clutch engage, phone rotation ignored. Often feels far
+        # more controlled; the Franka project's v1 shipped this way.
+        ExecuteProcess(cmd=[sys.executable, str(HERE / "arkit_receiver.py")]
+                       + ([] if os.environ.get("ORIENT", "1") != "0"
+                          else ["--no-orient"]),
                        output="screen"),
     ])
