@@ -1,3 +1,7 @@
+# NOTE: do NOT use rviz's 'Add Display' at runtime in this env - the conda
+# rviz2 build heap-crashes (free(): invalid pointer) creating render panels
+# interactively. Displays LOADED FROM THIS CONFIG work fine (verified with
+# live camera frames) - add new displays HERE instead.
 Panels:
   - Class: rviz_common/Displays
     Help Height: 78
@@ -52,6 +56,30 @@ Visualization Manager:
       TF Prefix: ""
       Update Interval: 0
       Visual Enabled: true
+    - Class: rviz_default_plugins/Image
+      Name: WristCam
+      Enabled: true
+      Topic:
+        Value: /wrist_cam/image
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Max Value: 1
+      Min Value: 0
+      Normalize Range: true
+    - Class: rviz_default_plugins/Image
+      Name: ExtCam
+      Enabled: true
+      Topic:
+        Value: /ext_cam/image
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Max Value: 1
+      Min Value: 0
+      Normalize Range: true
     - Class: rviz_default_plugins/TF
       Name: TF
       Enabled: false
