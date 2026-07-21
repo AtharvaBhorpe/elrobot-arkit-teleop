@@ -20,16 +20,23 @@ class Picker:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("camera picker")
-        self.root.geometry("900x640")
+        # resolution-aware scaling: Tk assumes ~96 dpi and renders tiny on
+        # high-res panels. Scale everything from the actual screen height
+        # (1080p -> 1.0, 1440p -> 1.33, 4k -> 2.0).
+        s = max(1.0, self.root.winfo_screenheight() / 1080)
+        self.root.tk.call("tk", "scaling", 1.33 * s)
+        self.root.geometry(f"{int(900 * s)}x{int(640 * s)}")
         ui_font = font.nametofont("TkDefaultFont")
-        ui_font.configure(size=13)
+        ui_font.configure(size=round(13 * s))
+        # the combobox's DROP-DOWN LIST styles its font separately
+        self.root.option_add("*TCombobox*Listbox.font", ui_font)
         style = ttk.Style()
-        style.configure("TCombobox", padding=6)
+        style.configure("TCombobox", padding=round(6 * s))
 
         devs = sorted(glob.glob("/dev/video*"))
         self.combo = ttk.Combobox(self.root, values=devs, state="readonly",
                                   font=ui_font)
-        self.combo.pack(fill="x", padx=6, pady=6)
+        self.combo.pack(fill="x", padx=round(6 * s), pady=round(6 * s))
         self.combo.bind("<<ComboboxSelected>>", self.select)
         # the feed fills all remaining space and grows with the window
         self.label = tk.Label(self.root, text="pick a device",
