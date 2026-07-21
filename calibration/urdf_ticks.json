@@ -1,0 +1,34 @@
+{
+  "rev_motor_01": {
+    "offset": 1941.0,
+    "sign": 1
+  },
+  "rev_motor_02": {
+    "offset": 2023.0,
+    "sign": -1
+  },
+  "rev_motor_03": {
+    "offset": 2073.5,
+    "sign": -1
+  },
+  "rev_motor_04": {
+    "offset": 2085.5,
+    "sign": 1
+  },
+  "rev_motor_05": {
+    "offset": 2089.0,
+    "sign": 1
+  },
+  "rev_motor_06": {
+    "offset": 2078.0,
+    "sign": 1
+  },
+  "rev_motor_07": {
+    "offset": 1996.0,
+    "sign": 1
+  },
+  "rev_motor_08": {
+    "closed_ticks": 2047,
+    "open_ticks": 3586
+  }
+}

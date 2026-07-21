@@ -1,7 +1,8 @@
 # ARKit Phone Teleoperation of the Elrobot Arm — Design
 
 **Date:** 2026-07-20 (updated 2026-07-21)
-**Status:** M0 passed, env proven. Next: M1a calibration.
+**Status:** M0, M1a, M1b done (joints 1/6 pending one bent-pose check; 5/7 roll signs
+confirmed in M2). Next: M2 — receiver + IK + viewer, no hardware.
 
 ## Goal
 
@@ -140,6 +141,19 @@ special-casing the SO-101 applies to `shoulder_pan` and `wrist_roll`.
 
 Calibration is interactive and hand-paced, so it is insensitive to bus latency.
 
+**DONE 2026-07-21** (`scripts/m1a_calibrate.py`, output `calibration/elrobot.json`).
+Notes for a re-run:
+
+- lerobot 0.6.1 has no `full_turn_motors` *parameter* — the treatment is done at the
+  robot-class level: exclude those joints from the sweep and assign `0..4095`
+  (see `SOFollower.calibrate()`). Safe here because the control path never uses
+  lerobot normalization; real limits come from the URDF.
+- The park pose needs no precision: swept joints tolerate ±79° of centring error.
+  Any relaxed pose with no joint within ~20° of a hard stop works.
+- Every swept joint recorded −1 to −3% of its URDF-expected span (a hand sweep
+  stops just shy of the stops) — physical corroboration of the URDF limits.
+- Gripper recorded 2047→3586 (closed→open), parked fully closed.
+
 ### M1b — URDF ↔ tick reconciliation
 
 LeRobot places joint zero at the **midpoint of the recorded range**. The URDF's zero is
@@ -171,6 +185,31 @@ The gripper needs no URDF correspondence — record ticks at fully-open and full
 compare predicted TCP against the arm's actual pose in the URDF viewer. This catches a
 sign error before the arm swings into the table.
 
+**DONE 2026-07-21** (`scripts/m1b_reconcile.py` derives the table, `scripts/verify_table.py`
+re-checks it; output `calibration/urdf_ticks.json`). What was learned:
+
+- **Offsets came from range midpoints, not a posed neutral.** The URDF has no meshes,
+  so matching `pin.neutral` by eye is impractical. Midpoint-of-recorded-range paired
+  with midpoint-of-URDF-range is self-correcting: the uniform −1 to −3% sweep
+  undershoot cancels. Joints 1–4 have symmetric URDF limits, so their offsets are
+  sign-independent for free.
+- Joints 5/7 got their ranges here instead (hand sweep with software encoder-wrap
+  unwrapping): spans −2.5% and −1.0% vs URDF — same band as the other five.
+- **Signs were observed via FK-derived plain-English prompts** ("move so the gripper
+  goes DOWN"), computed from TCP displacement — not the raw `+URDF direction`, which
+  is unactionable by hand.
+- **Verify at a clearly BENT pose.** Near neutral every joint decodes to q≈0 for
+  either sign, so the FK gate passes vacuously. At a bent pose flipped signs shift
+  the TCP 6–16 cm (joints 2/3/4) — verified against tape measurements agreeing to
+  ~1.5 cm once the ~3 cm base-pedestal height (URDF base frame sits at the joint-1
+  rotation plane, not the table) is accounted for.
+- **Joints 5 and 7 cannot be position-verified at any pose** — they are rolls whose
+  axes pass through the TCP; flipping them moves it ≤3.6 cm / 0.0 cm. Their signs
+  are confirmed in M2 by comparing model gripper roll to the real arm (fix = one
+  character in the JSON, no recalibration). Joints 1/6 signs are FK-consistent but
+  weakly tested so far; one bent-pose `verify_table.py` run clears them before M3.
+- Re-running M1a rewrites EEPROM homing offsets and **invalidates this table**.
+
 ## Verified findings
 
 Established by execution against the extracted URDF (Pinocchio 4.1.0), not assumed.
@@ -179,6 +218,7 @@ Established by execution against the extracted URDF (Pinocchio 4.1.0), not assum
 |---|---|---|
 | URDF loads without meshes | `nq=10, nv=10` | kinematics-only build is sufficient |
 | **Pinocchio ignores `<mimic>`** | both jaws are independent DOFs | driver **must index q by joint name**, never 1:1 to motors |
+| **Jaw origins are wrong in the URDF** | `rev_motor_08_1/_2` origins kept CAD world coords — jaws sit ~38 cm from `Gripper_Base_v1_1` | extraction artifact; leaf joints, so arm chain/IK/TCP unaffected. Never trust jaw geometry (collision checks, viz, grasp points) |
 | Arm Jacobian | 6×7, rank 6 in 100% of 4000 poses | full 6-DOF control, 1 redundant DOF |
 | Workspace | 0.628 × 0.621 × 0.540 m | — |
 | Max reach | 0.424 m | motion scale must drop to ~0.4 |
@@ -279,8 +319,8 @@ uncalibrated work (M0, M1b) must pass `normalize=False`.
 | | Milestone | Gate |
 |---|---|---|
 | M0 | Bus probe — `sync_read`/`sync_write` rate, desync check | ✅ **PASSED 2026-07-21.** p50 1.34 ms read / 0.32 ms write, 0 desync. `scripts/m0_bus_probe.py` |
-| M1a | LeRobot calibration | all 8 motors calibrated, ranges sane |
-| M1b | URDF↔tick offset/sign table | FK agreement with physical pose |
+| M1a | LeRobot calibration | ✅ **PASSED 2026-07-21.** All 8 within −3% of URDF spans. `scripts/m1a_calibrate.py` |
+| M1b | URDF↔tick offset/sign table | ✅ **PASSED 2026-07-21** for joints 2/3/4 (FK vs tape, ~1.5 cm). Joints 1/6: one bent-pose `verify_table.py` run pending; 5/7: confirmed visually in M2 |
 | M2 | Receiver + IK + viewer, no hardware | phone drives the model in a viewer |
 | M3 | Driver node, position-only, hard velocity clamp | arm tracks phone safely |
 | M4 | Full 6-DOF pose + gripper | pick-and-place |
