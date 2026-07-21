@@ -34,7 +34,10 @@ from cartesian_ik import (  # noqa: E402
 class IKNode(Node):
     def __init__(self, args):
         super().__init__("ik")
-        self.ik = CartesianServoIK()
+        frozen = tuple(f for f in args.freeze.split(",") if f)
+        self.ik = CartesianServoIK(frozen=frozen)
+        if frozen:
+            self.get_logger().info(f"SO-101 mode: frozen {list(frozen)}")
         self.ik.q_ref = self.ik.arm_q()  # null-space anchor; re-set on seed
         self.target: pin.SE3 | None = None
         self.gripper = GRIPPER_OPEN
@@ -120,6 +123,8 @@ def main():
     p.add_argument("--rate", type=float, default=100.0, help="servo rate Hz")
     p.add_argument("--smooth", type=float, default=0.35,
                    help="EMA alpha on the target pose (1 = no smoothing)")
+    p.add_argument("--freeze", default="",
+                   help="comma-separated joint names held at their seed pose")
     p.add_argument("--no-sim-state", dest="sim_state", action="store_false",
                    help="do not publish /joint_states (M3+: the driver owns it)")
     p.set_defaults(sim_state=True)

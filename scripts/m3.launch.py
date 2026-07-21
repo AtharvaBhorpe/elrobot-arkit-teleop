@@ -67,7 +67,8 @@ def generate_launch_description():
                        output="screen"),
         ExecuteProcess(cmd=[sys.executable, str(HERE / "ik_node.py"),
                             "--no-sim-state"]
-                       + _env_args([("SMOOTH", "--smooth")]),
+                       + _env_args([("SMOOTH", "--smooth"),
+                                    ("FREEZE", "--freeze")]),
                        output="screen"),
         ExecuteProcess(cmd=[sys.executable, str(HERE / "arkit_receiver.py")]
                        + _env_args([("SCALE", "--scale")])

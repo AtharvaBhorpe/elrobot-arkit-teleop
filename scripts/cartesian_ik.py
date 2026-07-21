@@ -57,6 +57,7 @@ class CartesianServoIK:
         max_sing_boost: float = 10.0,
         lin_tol: float = 1e-3,
         ang_tol: float = 5e-3,
+        frozen: tuple = (),   # joint NAMES held at their seed pose (SO-101 mode)
     ) -> None:
         self.model = pin.buildModelFromUrdf(urdf_path)
         self.data = self.model.createData()
@@ -70,6 +71,12 @@ class CartesianServoIK:
         self.q_min = self.model.lowerPositionLimit
         self.q_max = self.model.upperPositionLimit
 
+        # SO-101 mode: frozen joints keep their seeded position forever; the
+        # DLS solve runs on the ACTIVE columns only (a zeroed-column solve
+        # would also drive sigma_min to 0 and max-boost the damping).
+        assert all(f in ARM_JOINTS for f in frozen), frozen
+        self.active = np.array([i for i, n in enumerate(ARM_JOINTS)
+                                if n not in frozen])
         self.q_ref = None            # null-space posture anchor (see servo)
         self.kp_posture = 0.5        # gentle: 1/s pull, null-space only
         self.kp_lin, self.kp_ang = kp_lin, kp_ang
@@ -106,7 +113,15 @@ class CartesianServoIK:
 
         J = pin.computeFrameJacobian(self.model, self.data, self.q,
                                      self.ee_id, pin.LOCAL)
-        Ja = J[:, : self.n_arm]
+        Ja = J[:, : self.n_arm][:, self.active]   # active columns only
+
+        # Underactuated (SO-101 mode, <6 joints): chase POSITION only, like
+        # the SO-101 itself - full 6-DOF least-squares would trade position
+        # accuracy against an orientation 5 joints cannot hold (measured
+        # 37 mm equilibrium error). Orientation follows the kinematics.
+        task = 6 if len(self.active) >= 6 else 3
+        Ja = Ja[:task]
+        twist = twist[:task]
 
         # Singularity guard on sigma_min, the spec's verified criterion
         # (13.9% of the workspace has sigma_min < 0.01). The Franka port used
@@ -120,27 +135,32 @@ class CartesianServoIK:
             damp *= min(self.sing_threshold / (sigma_min + 1e-9),
                         self.max_sing_boost)
 
-        dq = Ja.T @ np.linalg.solve(Ja @ Ja.T + damp * np.eye(6), twist)
+        dq_act = Ja.T @ np.linalg.solve(Ja @ Ja.T + damp * np.eye(task), twist)
 
-        # Null-space posture anchor: the 7th DOF is task-redundant, and
-        # unanchored it wanders ("possessed elbow"). Pull gently toward the
-        # reference posture, projected through the EXACT orthogonal
-        # complement of the controllable task directions (sigma > threshold).
-        # A projector built from the damped pseudo-inverse is not exact and
-        # leaked the pull into the TCP (measured 6.4 mm of tracking offset).
+        # Null-space posture anchor: redundant DOFs wander unanchored
+        # ("possessed elbow"). Pull gently toward the reference posture,
+        # projected through the EXACT orthogonal complement of the
+        # controllable task directions (sigma > threshold). A projector built
+        # from the damped pseudo-inverse is not exact and leaked the pull
+        # into the TCP (measured 6.4 mm of tracking offset).
         if self.q_ref is not None:
+            n_act = len(self.active)
             Vr = Vt[: np.count_nonzero(S > self.sing_threshold)]
-            N = np.eye(self.n_arm) - Vr.T @ Vr
-            dq += N @ (self.kp_posture * (self.q_ref - self.q[: self.n_arm]))
+            N = np.eye(n_act) - Vr.T @ Vr
+            dq_act += N @ (self.kp_posture
+                           * (self.q_ref[self.active]
+                              - self.q[: self.n_arm][self.active]))
 
-        dq = np.clip(dq, -self.max_joint_vel, self.max_joint_vel)
+        dq = np.zeros(self.n_arm)                 # frozen joints never move
+        dq[self.active] = np.clip(dq_act, -self.max_joint_vel,
+                                  self.max_joint_vel)
 
         self.q[: self.n_arm] = np.clip(
             self.q[: self.n_arm] + dq * dt,
             self.q_min[: self.n_arm], self.q_max[: self.n_arm],
         )
         return (np.linalg.norm(lin_err) < self.lin_tol
-                and np.linalg.norm(ang_err) < self.ang_tol)
+                and (task == 3 or np.linalg.norm(ang_err) < self.ang_tol))
 
 
 if __name__ == "__main__":
@@ -193,4 +213,21 @@ if __name__ == "__main__":
           f"{d1:.3f} rad while TCP moved {tcp_moved*1000:.2f} mm")
     assert d1 < d0 - 0.05, "anchor did not move the posture toward q_ref"
     assert tcp_moved < 3e-3, f"anchor disturbed the TCP: {tcp_moved*1000:.1f} mm"
+
+    # SO-101 mode: joints 3 and 5 frozen -> 5 DoF. Position tracking must
+    # still converge (3 task dims, 5 joints) and frozen joints must not move.
+    fz = CartesianServoIK(frozen=("rev_motor_03", "rev_motor_05"))
+    fz.set_q(q0)
+    fz.q_ref = fz.arm_q()
+    frozen_before = fz.arm_q()[[2, 4]]
+    t2 = fz.ee_pose()
+    t2.translation = t2.translation + np.array([0.04, -0.04, 0.04])
+    for _ in range(2000):
+        fz.servo(t2, dt)
+    err_f = float(np.linalg.norm(fz.ee_pose().translation - t2.translation))
+    moved = np.abs(fz.arm_q()[[2, 4]] - frozen_before).max()
+    print(f"frozen(3,5) mode: pos err {err_f*1000:.1f} mm, "
+          f"frozen joints moved {moved:.2e} rad")
+    assert moved == 0.0, "frozen joints must not move"
+    assert err_f < 5e-3, f"5-DoF position tracking failed: {err_f*1000:.1f} mm"
     print("SELF-TEST PASSED")
