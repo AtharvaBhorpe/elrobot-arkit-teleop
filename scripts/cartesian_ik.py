@@ -115,41 +115,48 @@ class CartesianServoIK:
                                      self.ee_id, pin.LOCAL)
         Ja = J[:, : self.n_arm][:, self.active]   # active columns only
 
-        # Underactuated (SO-101 mode, <6 joints): chase POSITION only, like
-        # the SO-101 itself - full 6-DOF least-squares would trade position
-        # accuracy against an orientation 5 joints cannot hold (measured
-        # 37 mm equilibrium error). Orientation follows the kinematics.
         task = 6 if len(self.active) >= 6 else 3
-        Ja = Ja[:task]
-        twist = twist[:task]
 
-        # Singularity guard on sigma_min, the spec's verified criterion
-        # (13.9% of the workspace has sigma_min < 0.01). The Franka port used
-        # sqrt(det(J J^T)) -- the product of all 6 singular values -- which for
-        # this short-linked arm is ~1e-5 at GENERIC poses, so a 1e-2 threshold
-        # kept damping boosted 10x everywhere and crippled the servo.
-        _, S, Vt = np.linalg.svd(Ja, full_matrices=True)
-        sigma_min = float(S[-1])
-        damp = self.damping
-        if sigma_min < self.sing_threshold:
-            damp *= min(self.sing_threshold / (sigma_min + 1e-9),
-                        self.max_sing_boost)
+        def _dls(Jm, v):
+            """Damped least squares with the sigma_min-adaptive guard
+            (the spec's verified criterion: 13.9% of the workspace has
+            sigma_min < 0.01; a det-based metric max-boosted damping at
+            every generic pose on this short-linked arm)."""
+            _, S, Vt = np.linalg.svd(Jm, full_matrices=True)
+            damp = self.damping
+            if S[-1] < self.sing_threshold:
+                damp *= min(self.sing_threshold / (S[-1] + 1e-9),
+                            self.max_sing_boost)
+            dq = Jm.T @ np.linalg.solve(
+                Jm @ Jm.T + damp * np.eye(Jm.shape[0]), v)
+            return dq, S, Vt
 
-        dq_act = Ja.T @ np.linalg.solve(Ja @ Ja.T + damp * np.eye(task), twist)
-
-        # Null-space posture anchor: redundant DOFs wander unanchored
-        # ("possessed elbow"). Pull gently toward the reference posture,
-        # projected through the EXACT orthogonal complement of the
-        # controllable task directions (sigma > threshold). A projector built
-        # from the damped pseudo-inverse is not exact and leaked the pull
-        # into the TCP (measured 6.4 mm of tracking offset).
-        if self.q_ref is not None:
-            n_act = len(self.active)
-            Vr = Vt[: np.count_nonzero(S > self.sing_threshold)]
-            N = np.eye(n_act) - Vr.T @ Vr
-            dq_act += N @ (self.kp_posture
-                           * (self.q_ref[self.active]
-                              - self.q[: self.n_arm][self.active]))
+        n_act = len(self.active)
+        if task == 6:
+            dq_act, S, Vt = _dls(Ja, twist)
+            # Null-space posture anchor: redundant DOFs wander unanchored
+            # ("possessed elbow"). Pull gently toward the reference posture,
+            # through the EXACT orthogonal complement of the controllable
+            # directions (a damped-pinv projector leaked 6.4 mm into the TCP).
+            if self.q_ref is not None:
+                Vr = Vt[: np.count_nonzero(S > self.sing_threshold)]
+                N = np.eye(n_act) - Vr.T @ Vr
+                dq_act += N @ (self.kp_posture
+                               * (self.q_ref[self.active]
+                                  - self.q[: self.n_arm][self.active]))
+        else:
+            # Underactuated (SO-101 mode): TASK-PRIORITY. Position solved
+            # exactly as the primary task (3 dims, 5 joints); orientation is
+            # served strictly inside position's null space - the wrist tracks
+            # whatever pitch/roll it can reach without ever costing position.
+            # (Equal-weight 6-DOF least squares stalled 37 mm short.)
+            dq1, Sp, Vtp = _dls(Ja[:3], twist[:3])
+            Vr = Vtp[: np.count_nonzero(Sp > self.sing_threshold)]
+            Np = np.eye(n_act) - Vr.T @ Vr           # exact position null space
+            Jo = Ja[3:] @ Np
+            dq2, _, _ = _dls(Jo, twist[3:] - Ja[3:] @ dq1)
+            dq_act = dq1 + Np @ dq2
+            # no posture anchor: 3 + 2 task dims consume all 5 joints
 
         dq = np.zeros(self.n_arm)                 # frozen joints never move
         dq[self.active] = np.clip(dq_act, -self.max_joint_vel,
@@ -214,20 +221,35 @@ if __name__ == "__main__":
     assert d1 < d0 - 0.05, "anchor did not move the posture toward q_ref"
     assert tcp_moved < 3e-3, f"anchor disturbed the TCP: {tcp_moved*1000:.1f} mm"
 
-    # SO-101 mode: joints 3 and 5 frozen -> 5 DoF. Position tracking must
-    # still converge (3 task dims, 5 joints) and frozen joints must not move.
-    fz = CartesianServoIK(frozen=("rev_motor_03", "rev_motor_05"))
-    fz.set_q(q0)
-    fz.q_ref = fz.arm_q()
-    frozen_before = fz.arm_q()[[2, 4]]
-    t2 = fz.ee_pose()
-    t2.translation = t2.translation + np.array([0.04, -0.04, 0.04])
-    for _ in range(2000):
-        fz.servo(t2, dt)
-    err_f = float(np.linalg.norm(fz.ee_pose().translation - t2.translation))
-    moved = np.abs(fz.arm_q()[[2, 4]] - frozen_before).max()
-    print(f"frozen(3,5) mode: pos err {err_f*1000:.1f} mm, "
-          f"frozen joints moved {moved:.2e} rad")
-    assert moved == 0.0, "frozen joints must not move"
-    assert err_f < 5e-3, f"5-DoF position tracking failed: {err_f*1000:.1f} mm"
+    # SO-101 mode: joints 3 and 5 frozen -> 5 DoF, task-priority servo.
+    # Contract: position EXACT always; achievable orientation (wrist
+    # pitch/roll) tracked in position's null space; unreachable orientation
+    # (yaw) sacrificed without costing position.
+    # Measured contract (vs a zero-orientation-effort baseline): position
+    # exact everywhere; pitch/roll targets recover the achievable component
+    # (19.9->10.5 deg, 19.4->9.2 deg); yaw is unreachable (26 deg = baseline:
+    # translating swings the base pan and nothing among the 5 joints can yaw
+    # back independently). The ~9 deg floor is that translation-induced yaw.
+    for ax, ang_max in ((None, 0.21), ("x", 0.25), ("y", 0.23), ("z", None)):
+        fz = CartesianServoIK(frozen=("rev_motor_03", "rev_motor_05"))
+        fz.set_q(q0)
+        frozen_before = fz.arm_q()[[2, 4]]
+        t2 = fz.ee_pose()
+        t2.translation = t2.translation + np.array([0.04, -0.04, 0.04])
+        if ax:
+            t2.rotation = t2.rotation @ pin.utils.rotate(ax, 0.3)
+        for _ in range(2000):
+            fz.servo(t2, dt)
+        err_f = float(np.linalg.norm(fz.ee_pose().translation
+                                     - t2.translation))
+        ang_f = float(np.linalg.norm(pin.log3(
+            fz.ee_pose().rotation.T @ t2.rotation)))
+        moved = np.abs(fz.arm_q()[[2, 4]] - frozen_before).max()
+        print(f"frozen(3,5) rot={ax or 'none':<4}: pos {err_f*1000:5.1f} mm, "
+              f"ang {np.degrees(ang_f):5.1f} deg, frozen moved {moved:.0e}")
+        assert moved == 0.0, "frozen joints must not move"
+        assert err_f < 5e-3, f"position must stay exact: {err_f*1000:.1f} mm"
+        if ang_max is not None:
+            assert ang_f < ang_max, \
+                f"achievable orientation not tracked: {ang_f:.3f} rad"
     print("SELF-TEST PASSED")

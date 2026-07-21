@@ -9,6 +9,8 @@ then re-engage far away. All assertions are made from the outside, via
     pixi run python scripts/test_m2_pipeline.py
 """
 
+import os
+os.environ.setdefault("ROS_DOMAIN_ID", "77")  # NEVER touch a live session's DDS graph
 import json
 import socket
 import subprocess

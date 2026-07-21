@@ -45,7 +45,9 @@ view = "python scripts/make_viz_urdf.py && ros2 launch scripts/view.launch.py"
 m2 = "python scripts/make_viz_urdf.py && ros2 launch scripts/m2.launch.py"
 # m3-arm: phone drives the REAL arm (driver + ik --no-sim-state + receiver)
 m3-arm = "python scripts/make_viz_urdf.py && ros2 launch scripts/m3.launch.py"
-# m3-arm5: SO-101-style 5+1 DoF - joints 3 and 5 frozen at their start pose
+# m3-arm5: SO-101-style 5+1 DoF - joints 3 and 5 frozen at their start
+# pose. Task-priority servo: position EXACT, wrist pitch/roll tracked in
+# position's null space, yaw follows the arm (5 joints cannot yaw freely)
 m3-arm5 = "python scripts/make_viz_urdf.py && FREEZE=rev_motor_03,rev_motor_05 ros2 launch scripts/m3.launch.py"
 # m3-arm6: 6+1 DoF with FULL orientation - joint 3 frozen (a redundant
 # pitch). NOT joint 5: without that roll the 6-joint Jacobian is
