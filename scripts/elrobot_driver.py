@@ -40,7 +40,9 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from cartesian_ik import ARM_JOINTS, GRIPPER_CLOSED, GRIPPER_JOINT, TCP_FRAME  # noqa: E402
+from cartesian_ik import (  # noqa: E402
+    ARM_JOINTS, GRIPPER_CLOSED, GRIPPER_JOINT, JAW_MIMIC, TCP_FRAME,
+)
 
 TICKS_PER_RAD = 651.9
 DEADMAN_S = 0.2
@@ -328,9 +330,12 @@ class ElrobotDriver(Node):
         self.last_present = dict(present)
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.name = ALL_JOINTS
+        grip_q = self.conv.grip_q(present[GRIPPER_JOINT])
+        # jaw prismatic states via the vendor mimic ratio, so rviz animates
+        # the jaws (robot_state_publisher does not evaluate <mimic> itself)
+        msg.name = ALL_JOINTS + list(JAW_MIMIC)
         msg.position = [self.conv.arm_q(n, present[n]) for n in ARM_JOINTS] \
-            + [self.conv.grip_q(present[GRIPPER_JOINT])]
+            + [grip_q] + [r * grip_q for r in JAW_MIMIC.values()]
         self.state_pub.publish(msg)
 
 

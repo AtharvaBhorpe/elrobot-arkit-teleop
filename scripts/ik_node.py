@@ -26,7 +26,9 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from cartesian_ik import ARM_JOINTS, GRIPPER_JOINT, GRIPPER_OPEN, CartesianServoIK  # noqa: E402
+from cartesian_ik import (  # noqa: E402
+    ARM_JOINTS, GRIPPER_JOINT, GRIPPER_OPEN, JAW_MIMIC, CartesianServoIK,
+)
 
 
 class IKNode(Node):
@@ -103,8 +105,11 @@ class IKNode(Node):
             self.ik.servo(self.target, self.dt)
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.name = ARM_JOINTS + [GRIPPER_JOINT]
-        msg.position = [*map(float, self.ik.arm_q()), float(self.gripper)]
+        # jaw mimic states ride along for robot_state_publisher/rviz;
+        # the driver ignores the jaw names on /joint_command
+        msg.name = ARM_JOINTS + [GRIPPER_JOINT] + list(JAW_MIMIC)
+        msg.position = [*map(float, self.ik.arm_q()), float(self.gripper)] \
+            + [r * float(self.gripper) for r in JAW_MIMIC.values()]
         self.cmd_pub.publish(msg)
         if self.state_pub:
             self.state_pub.publish(msg)

@@ -29,6 +29,9 @@ GRIPPER_JOINT = "rev_motor_08"
 # job (calibration/urdf_ticks.json). These are viz/command targets only.
 GRIPPER_OPEN = 0.0
 GRIPPER_CLOSED = 2.0
+# jaw prismatic mimic ratios from the vendor URDF (m per rad of rev_motor_08);
+# published with /joint_states so robot_state_publisher animates the jaws
+JAW_MIMIC = {"rev_motor_08_1": -0.0115, "rev_motor_08_2": 0.0115}
 
 
 def _clamp_norm(v: np.ndarray, max_norm: float) -> np.ndarray:
