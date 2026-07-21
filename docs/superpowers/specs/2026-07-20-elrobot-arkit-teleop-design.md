@@ -321,7 +321,7 @@ uncalibrated work (M0, M1b) must pass `normalize=False`.
 | M0 | Bus probe — `sync_read`/`sync_write` rate, desync check | ✅ **PASSED 2026-07-21.** p50 1.34 ms read / 0.32 ms write, 0 desync. `scripts/m0_bus_probe.py` |
 | M1a | LeRobot calibration | ✅ **PASSED 2026-07-21.** All 8 within −3% of URDF spans. `scripts/m1a_calibrate.py` |
 | M1b | URDF↔tick offset/sign table | ✅ **PASSED 2026-07-21** for joints 2/3/4 (FK vs tape, ~1.5 cm). Joints 1/6: one bent-pose `verify_table.py` run pending; 5/7: confirmed visually in M2 |
-| M2 | Receiver + IK + viewer, no hardware | phone drives the model in a viewer |
+| M2 | Receiver + IK + viewer, no hardware | **pipeline verified 2026-07-21** with a synthetic phone (`scripts/test_m2_pipeline.py`: +25 cm phone-up → +8 cm TCP, gripper latch, deadman + far re-engage with 0 mm jump). Live ZIG SIM run pending: `pixi run m2` |
 | M3 | Driver node, position-only, hard velocity clamp | arm tracks phone safely |
 | M4 | Full 6-DOF pose + gripper | pick-and-place |
 | M5 | Safety hardening and tuning | all safety rules enforced and tested |

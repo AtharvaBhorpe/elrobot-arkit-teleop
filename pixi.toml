@@ -33,5 +33,7 @@ lerobot = { git = "https://github.com/huggingface/lerobot.git", extras = ["feete
 [tasks]
 # prove-env: the M0/M2 prerequisite gate — all four stacks import in one process
 prove-env = "python scripts/prove_env.py"
-# view: stick-figure URDF in rviz2 with joint sliders (regenerates viz URDF first)
+# view: URDF in rviz2 with joint sliders (regenerates viz URDF first)
 view = "python scripts/make_viz_urdf.py && ros2 launch scripts/view.launch.py"
+# m2: phone (ZIG SIM PRO -> UDP :50000) drives the model in rviz2, no hardware
+m2 = "python scripts/make_viz_urdf.py && ros2 launch scripts/m2.launch.py"
