@@ -24,6 +24,7 @@ unchanged; all new work sits below the joint-command boundary.
 | Servos | Feetech STS3215, 4096 ticks/rev, ~2.94 N·m stall |
 | Bus | single half-duplex serial via CH343 USB adapter (`1a86:55d3`) |
 | Port | `/dev/ttyACM0` — CH343 binds `cdc_acm`, **not** `ttyUSB`. Needs `dialout`. |
+| Camera | Innomaker U20CAM-1080P (120° FOV) on a bracket atop `Gripper_Base_v1_1`. `camera_optical_frame` (REP-103) in the viz URDF; mount pose field-calibrated to mm against the real bracket (knob: `CAM_MOUNT_XYZ` in `make_viz_urdf.py`). URDF frame = initial guess; do hand-eye calibration before trusting it for perception. |
 | URDF | extracted from the NormaCore `station` binary; 18 joints, 19 links |
 
 ### Why not NormaCore station
