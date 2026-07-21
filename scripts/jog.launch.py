@@ -8,10 +8,11 @@ workspace box, sigma floor, URDF limits, deadman - the GUI republishes at
 ~10 Hz, which keeps the deadman fed). The driver's sync_read publishes the
 real /joint_states, so rviz shows the actual arm, not the sliders.
 
-STARTUP MOVE WARNING: the sliders initialize at ZERO = URDF neutral. The
-moment the GUI appears, the driver will slew the arm from wherever it is
-to the neutral pose (velocity-clamped, workspace-gated, but it WILL move).
-Clear the arm's space before launching.
+The sliders START AT THE ARM'S CURRENT POSE: launch-time code reads the
+bus (the port is free before any node starts) and passes the decoded
+angles as the GUI's `zeros` parameters - so appearing does not move the
+arm. If that read fails, sliders fall back to zero = URDF neutral and the
+arm WILL slew there on GUI start (a warning is printed).
 """
 
 import sys
@@ -23,9 +24,41 @@ from launch_ros.actions import Node
 
 HERE = Path(__file__).resolve().parent
 URDF = (HERE.parent / "docs" / "urdf_Elrobot_viz.urdf").read_text()
+sys.path.insert(0, str(HERE))
+
+
+def current_pose_zeros():
+    """Read the real arm pose -> {'zeros.<joint>': rad} for the slider GUI."""
+    from cartesian_ik import ARM_JOINTS, GRIPPER_JOINT
+    from elrobot_driver import Converter
+    from lerobot.motors import Motor, MotorNormMode
+    from lerobot.motors.feetech import FeetechMotorsBus
+
+    conv = Converter(str(HERE.parent / "calibration" / "urdf_ticks.json"))
+    bus = FeetechMotorsBus(
+        port="/dev/ttyACM0",
+        motors={n: Motor(i, "sts3215", MotorNormMode.RANGE_M100_100)
+                for i, n in enumerate(ARM_JOINTS + [GRIPPER_JOINT], start=1)},
+        calibration=None)
+    bus.connect(handshake=False)
+    try:
+        ticks = bus.sync_read("Present_Position",
+                              ARM_JOINTS + [GRIPPER_JOINT], normalize=False)
+    finally:
+        bus.disconnect()
+    zeros = {f"zeros.{n}": conv.arm_q(n, ticks[n]) for n in ARM_JOINTS}
+    zeros[f"zeros.{GRIPPER_JOINT}"] = conv.grip_q(ticks[GRIPPER_JOINT])
+    return zeros
 
 
 def generate_launch_description():
+    try:
+        zeros = current_pose_zeros()
+        print("jog: sliders seeded from the real arm pose")
+    except Exception as e:  # noqa: BLE001 - degrade to neutral with a warning
+        zeros = {}
+        print(f"jog: could NOT read arm pose ({e}) - sliders start at ZERO, "
+              "the arm WILL move to neutral on GUI start!")
     return LaunchDescription([
         Node(package="robot_state_publisher", executable="robot_state_publisher",
              parameters=[{"robot_description": URDF}]),
@@ -35,5 +68,6 @@ def generate_launch_description():
                        output="screen"),
         Node(package="joint_state_publisher_gui",
              executable="joint_state_publisher_gui",
+             parameters=[zeros] if zeros else [],
              remappings=[("/joint_states", "/joint_command")]),
     ])
