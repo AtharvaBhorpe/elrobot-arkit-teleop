@@ -20,6 +20,9 @@ import sys
 from pathlib import Path
 
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration
 from launch.actions import ExecuteProcess
 from launch_ros.actions import Node
 
@@ -67,11 +70,16 @@ def generate_launch_description():
         print(f"jog: could NOT read arm pose ({e}) - sliders start at ZERO, "
               "the arm WILL move to neutral on GUI start!")
     return LaunchDescription([
+        # rviz is optional: `pixi run <task> rviz:=false` or RVIZ=0 env
+        # (e.g. when Foxglove Studio + `pixi run bridge` is the GUI)
+        DeclareLaunchArgument("rviz",
+                              default_value=os.environ.get("RVIZ", "true")),
         Node(package="robot_state_publisher", executable="robot_state_publisher",
              parameters=[{"robot_description": URDF}]),
         Node(package="rviz2", executable="rviz2",
              arguments=["-d", str(HERE / "view.rviz")],
-             additional_env=QT_SAFE_ENV),
+             additional_env=QT_SAFE_ENV,
+             condition=IfCondition(LaunchConfiguration("rviz"))),
         ExecuteProcess(cmd=[sys.executable, str(HERE / "elrobot_driver.py"),
                             "--port", os.environ.get("PORT", "/dev/ttyACM0")],
                        output="screen"),

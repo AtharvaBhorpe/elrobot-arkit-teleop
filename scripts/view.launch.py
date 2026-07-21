@@ -6,9 +6,13 @@ Sliders (joint_state_publisher_gui) -> /joint_states -> robot_state_publisher
 -> TF -> rviz2. Later, M2's ik node replaces the sliders on the same topic.
 """
 
+import os
 from pathlib import Path
 
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 HERE = Path(__file__).resolve().parent
@@ -23,6 +27,10 @@ QT_SAFE_ENV = {"QT_IM_MODULE": "compose", "QT_IM_MODULES": "",
 
 def generate_launch_description():
     return LaunchDescription([
+        # rviz is optional: `pixi run <task> rviz:=false` or RVIZ=0 env
+        # (e.g. when Foxglove Studio + `pixi run bridge` is the GUI)
+        DeclareLaunchArgument("rviz",
+                              default_value=os.environ.get("RVIZ", "true")),
         Node(package="robot_state_publisher", executable="robot_state_publisher",
              parameters=[{"robot_description": URDF}]),
         Node(package="joint_state_publisher_gui",
@@ -30,5 +38,6 @@ def generate_launch_description():
              additional_env=QT_SAFE_ENV),
         Node(package="rviz2", executable="rviz2",
              arguments=["-d", str(HERE / "view.rviz")],
-             additional_env=QT_SAFE_ENV),
+             additional_env=QT_SAFE_ENV,
+             condition=IfCondition(LaunchConfiguration("rviz"))),
     ])
