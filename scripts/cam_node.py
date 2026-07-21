@@ -18,15 +18,25 @@ class CamNode(Node):
     def __init__(self, args):
         super().__init__(args.name)
         self.cap = cv2.VideoCapture(args.device)
+        if not self.cap.isOpened():
+            raise SystemExit(f"cannot open {args.device}")
+        # MJPG, not the default uncompressed YUYV: two uncompressed 640x480@30
+        # streams (~147 Mbps each) exceed a USB2 hub's isochronous budget and
+        # the second camera opens but never delivers frames.
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
         self.cap.set(cv2.CAP_PROP_FPS, args.fps)
-        if not self.cap.isOpened():
-            raise SystemExit(f"cannot open {args.device}")
         self.pub = self.create_publisher(Image, args.topic, 1)
         self.frame_id = args.topic.strip("/").split("/")[0]
         self.create_timer(1.0 / args.fps, self._tick)
-        self.get_logger().info(f"{args.device} -> {args.topic} @ {args.fps} fps")
+        fcc = int(self.cap.get(cv2.CAP_PROP_FOURCC))
+        fourcc = "".join(chr((fcc >> 8 * i) & 0xFF) for i in range(4))
+        self.get_logger().info(
+            f"{args.device} -> {args.topic}  negotiated {fourcc} "
+            f"{int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
+            f"{int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}"
+            f"@{self.cap.get(cv2.CAP_PROP_FPS):.0f}")
 
     def _tick(self):
         ok, frame = self.cap.read()
