@@ -37,24 +37,28 @@ def main():
     bus.connect(handshake=True)
     bus.disable_torque()
     print("torque DISABLED - joints move by hand. Ctrl-C to quit.\n")
-    print(f"{'JOINT':<14}{'TICKS':>7}{'q(rad)':>9}{'q(deg)':>9}")
+    print(f"{'JOINT':<14}{'TICKS':>7}{'q(rad)':>9}{'q(deg)':>9}{'mA':>7}")
     try:
         first = True
         while True:
-            ticks = bus.sync_read("Present_Position",
-                                  ARM + ["rev_motor_08"], normalize=False)
+            names = ARM + ["rev_motor_08"]
+            ticks = bus.sync_read("Present_Position", names, normalize=False)
+            cur = bus.sync_read("Present_Current", names, normalize=False)
+            # Feetech sign-magnitude (bit 15); ~6.5 mA/LSB
+            ma = {n: (v & 0x7FFF) * 6.5 for n, v in cur.items()}
             if not first:
                 print(f"\x1b[{len(ticks)}A", end="")  # cursor up, overwrite
             first = False
             for n in ARM:
                 q = (ticks[n] - table[n]["offset"]) / (
                     table[n]["sign"] * TICKS_PER_RAD)
-                print(f"{n:<14}{ticks[n]:>7}{q:>9.3f}{math.degrees(q):>9.1f}")
+                print(f"{n:<14}{ticks[n]:>7}{q:>9.3f}{math.degrees(q):>9.1f}"
+                      f"{ma[n]:>7.0f}")
             g = table["rev_motor_08"]
             span = g["open_ticks"] - g["closed_ticks"]
             frac = (ticks["rev_motor_08"] - g["closed_ticks"]) / span
             print(f"{'rev_motor_08':<14}{ticks['rev_motor_08']:>7}"
-                  f"{'':>9}{frac:>8.0%} open")
+                  f"{'':>9}{frac:>8.0%} open{ma['rev_motor_08']:>6.0f}")
             time.sleep(0.2)
     except KeyboardInterrupt:
         pass

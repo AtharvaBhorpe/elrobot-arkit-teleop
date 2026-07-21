@@ -138,6 +138,15 @@ class ElrobotDriver(Node):
             bus.connect(handshake=True)
         self.bus = bus
 
+        # gripper grasp state: contact detected via Present_Current while
+        # closing -> latch goal at contact + squeeze (bounded press force)
+        g = self.conv.t[GRIPPER_JOINT]
+        self.close_dir = 1 if g["closed_ticks"] > g["open_ticks"] else -1
+        self.grip_thresh = args.grip_current_thresh
+        self.grip_squeeze = args.grip_squeeze
+        self.grasp_goal = None
+        self.grasp_hits = 0
+
         present = self.bus.sync_read("Present_Position", ALL_JOINTS,
                                      normalize=False)
         self.slew_pos = {n: float(v) for n, v in present.items()}  # float acc
@@ -216,6 +225,48 @@ class ElrobotDriver(Node):
         except Exception as e:  # noqa: BLE001
             self.get_logger().error(f"bus recovery failed: {e}")
 
+    def _grasp_logic(self):
+        """Contact-detecting gripper: stop at the object, keep pressing.
+
+        While the gripper is commanded toward CLOSED and still moving, watch
+        Present_Current; a sustained spike (3 cycles) means the jaws met
+        something. Latch the goal at contact + squeeze ticks: the servo's
+        position error then presses with a steady, Torque_Limit-capped force
+        (active normal force) instead of driving on toward fully-closed and
+        squirting the object out. An OPEN command releases the latch.
+        """
+        g = GRIPPER_JOINT
+        cmd = self.target[g]
+        pos = self.slew_pos[g]
+        if self.grasp_goal is not None:
+            # release when the command retreats toward open past the latch
+            if (cmd - self.grasp_goal) * self.close_dir < -30:
+                self.grasp_goal = None
+                self.grasp_hits = 0
+                self.get_logger().info("grasp released")
+            return
+        if (cmd - pos) * self.close_dir <= 5:   # not actively closing
+            self.grasp_hits = 0
+            return
+        try:
+            raw = self.bus.sync_read("Present_Current", [g],
+                                     normalize=False, num_retry=1)[g]
+        except Exception as e:  # noqa: BLE001
+            self.get_logger().warning(f"current read failed: {e}")
+            self._recover_bus()
+            return
+        # Feetech encodes signed values sign-magnitude (bit 15). ~6.5 mA/LSB.
+        mag = raw & 0x7FFF
+        self.grasp_hits = self.grasp_hits + 1 if mag >= self.grip_thresh else 0
+        if self.grasp_hits >= 3:
+            t = self.conv.t[g]
+            lo, hi = sorted((t["open_ticks"], t["closed_ticks"]))
+            self.grasp_goal = int(np.clip(
+                pos + self.close_dir * self.grip_squeeze, lo, hi))
+            self.get_logger().info(
+                f"grasp: contact at ~{mag * 6.5:.0f} mA, holding "
+                f"{self.grip_squeeze} ticks of squeeze")
+
     # -- the 100 Hz cycle --------------------------------------------------
     def _tick(self):
         # deadman: command stream went quiet while we had a live target
@@ -227,10 +278,14 @@ class ElrobotDriver(Node):
 
         # slew toward target and write (unless smoke mode / no command yet)
         if self.target is not None and self.torque:
+            self._grasp_logic()
             out = {}
             for n in ALL_JOINTS:
+                tgt = (self.grasp_goal
+                       if n == GRIPPER_JOINT and self.grasp_goal is not None
+                       else self.target[n])
                 self.slew_pos[n] += float(np.clip(
-                    self.target[n] - self.slew_pos[n],
+                    tgt - self.slew_pos[n],
                     -self.max_step[n], self.max_step[n]))
                 out[n] = int(round(self.slew_pos[n]))
             if out != self.last_sent:
@@ -270,6 +325,11 @@ def build_args(argv=None):
                    help="Torque_Limit register for motor 8 (0-1000)")
     p.add_argument("--accel", type=int, default=40,
                    help="Acceleration register, all motors (0=step response)")
+    p.add_argument("--grip-current-thresh", type=int, default=60,
+                   help="grasp contact threshold, Present_Current LSB "
+                        "(~6.5 mA each). Tune with watch_ticks' mA column.")
+    p.add_argument("--grip-squeeze", type=int, default=40,
+                   help="ticks of squeeze held past the contact point")
     p.add_argument("--z-min", dest="z_min", type=float, default=0.02)
     p.add_argument("--r-max", dest="r_max", type=float, default=0.45)
     # Backstop only: measured sigma_min distribution has NEUTRAL at 0.0011
