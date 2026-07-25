@@ -7,6 +7,12 @@ gripper. Includes contact-sensing grasping, three DoF modes, dual-camera
 recording straight into LeRobotDataset for imitation learning, and mcap
 session capture for Foxglove replay.
 
+![Foxglove: the URDF tracking the real arm, alongside both camera feeds](assets/foxglove-demo.gif)
+
+*Live session in Foxglove — the display model follows the real arm from
+`/joint_states` while the wrist and external cameras stream alongside it.
+[Full 47 s clip](assets/foxglove-demo.mp4).*
+
 ```
 iPhone ──UDP──▶ arkit_receiver ──/target_pose──▶ ik ──/joint_command──▶ elrobot_driver ──serial──▶ arm
                                                   ▲                          │
@@ -25,6 +31,15 @@ tested against a stub bus.
 | Arm | Elrobot 7R + gripper, Feetech STS3215 servos, CH343 serial (`/dev/ttyACM*`) |
 | Cameras | Innomaker U20CAM-1080P on the gripper + external webcam |
 | Phone | iPhone running ZIG SIM PRO (ARKit + touch, UDP JSON, :50000) |
+
+<p align="center">
+  <img src="assets/elrobot-1.jpeg" width="45%" alt="The arm raised, wrist camera mounted above the gripper" />
+  <img src="assets/elrobot-2.jpeg" width="45%" alt="Desk setup: the arm with the external webcam on a tripod behind it" />
+</p>
+
+The wrist camera rides on a printed bracket above the jaws (its mount and
+optical frame are in the display URDF, so its view is a real TF); the external
+webcam sits on a tripod for scene context. Both feed the recorder.
 
 ## Quickstart
 
