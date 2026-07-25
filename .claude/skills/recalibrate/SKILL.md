@@ -26,7 +26,7 @@ outputs and gate progression.
   is −1..−3% (hand sweeps stop shy of the stops).
 - Gripper: park it FULLY CLOSED first, then sweep to fully open.
 
-## Step 2 — M1b: `pixi run python scripts/m1b_reconcile.py`
+## Step 2 — M1b: `pixi run python -m elrobot.calibration.m1b_reconcile`
 
 - Offsets come from range midpoints; joints 5/7 get their ranges here via
   the encoder-unwrapping sweep (expect ~336°/340°).

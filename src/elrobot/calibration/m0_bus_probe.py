@@ -11,7 +11,7 @@ no command here can move the arm. The optional --write test writes each motor's
 All reads use normalize=False: the arm is uncalibrated at M0, and normalization
 requires calibration. Raw ticks are also what M1b needs for the offset table.
 
-Run: pixi run python scripts/m0_bus_probe.py [--port /dev/ttyACM0] [-n 200] [--write]
+Run: pixi run python -m elrobot.calibration.m0_bus_probe [--port /dev/ttyACM0] [-n 200] [--write]
 """
 
 import argparse

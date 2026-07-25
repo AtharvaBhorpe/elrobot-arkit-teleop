@@ -9,7 +9,7 @@ Samples the LATEST of each stream at --fps (default 30):
 Run in its OWN terminal (keyboard control) with the m3-arm stack and both
 cam nodes up:
 
-    pixi run record            # = python scripts/episode_recorder.py
+    pixi run record            # = python -m elrobot.nodes.episode_recorder
 
 ENTER starts/stops an episode; q + ENTER saves everything and exits.
 --auto N records one N-second episode with no keyboard (used by the test).

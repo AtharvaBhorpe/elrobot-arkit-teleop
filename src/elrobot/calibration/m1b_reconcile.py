@@ -13,7 +13,7 @@ recorded range; phase A captures it here (with encoder-wrap unwrapping).
 
 INTERACTIVE, torque off, arm moved by hand. Run from a real terminal:
 
-    pixi run python scripts/m1b_reconcile.py
+    pixi run python -m elrobot.calibration.m1b_reconcile
 
 SAFETY: torque disabled throughout - the arm is limp and will sag. Nothing here
 commands motion. The verification gate at the end is measure-only.

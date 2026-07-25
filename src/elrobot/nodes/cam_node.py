@@ -3,7 +3,7 @@
 One process per camera, so a wedged device can never stall the other camera
 or anything else. No cv_bridge - the Image message is filled by hand.
 
-    pixi run python scripts/cam_node.py --device /dev/video0 --topic /wrist_cam/image
+    pixi run python -m elrobot.nodes.cam_node --device /dev/video0 --topic /wrist_cam/image
 """
 
 import argparse

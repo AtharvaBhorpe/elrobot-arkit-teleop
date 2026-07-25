@@ -107,13 +107,13 @@ infrastructure that already exists and is tested.
   *Depends:* Task 7.
 
 - [ ] **Task 9: Policy node** (M, 2 files + test)
-  `scripts/policy_node.py`: loads the checkpoint, subscribes both image
+  `src/elrobot/nodes/policy_node.py`: loads the checkpoint, subscribes both image
   topics + /joint_states, publishes /joint_command at the policy rate —
   a drop-in replacement for the ik node; driver and all gates unchanged.
   Synthetic test in the test_m2_pipeline style (fake cameras/states →
   commands within limits), ROS_DOMAIN_ID pinned.
   *Accept:* node runs against fakes; commands bounded and smooth.
-  *Verify:* new `scripts/test_policy_node.py` green; safety suite green.
+  *Verify:* new `tests/test_policy_node.py` green; safety suite green.
   *Depends:* Task 8 (checkpoint exists); can start scaffolding after
   Checkpoint B using a random-weights checkpoint.
 

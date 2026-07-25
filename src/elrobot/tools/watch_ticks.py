@@ -3,7 +3,7 @@
 The hand tool for sign checks and M3 debugging: rotate a joint by hand and
 watch its tick count and decoded q move in real time.
 
-    pixi run python scripts/watch_ticks.py
+    pixi run ticks
 
 Torque is disabled on start (so joints can be moved by hand) and left
 disabled. Read-only otherwise. Ctrl-C to quit.

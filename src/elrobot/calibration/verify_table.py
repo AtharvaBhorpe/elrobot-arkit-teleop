@@ -8,7 +8,7 @@ holding. Near the URDF neutral pose every joint decodes to q~0 for either sign,
 so a wrong sign is invisible and the check passes vacuously. Hold a clearly
 BENT pose - the sensitivity column tells you whether the pose has leverage.
 
-    pixi run python scripts/verify_table.py
+    pixi run python -m elrobot.calibration.verify_table
 
 Read-only: torque is disabled, nothing is ever commanded.
 """

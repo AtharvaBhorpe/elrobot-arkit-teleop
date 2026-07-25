@@ -11,7 +11,7 @@ with singularity-adaptive lambda (the spec's verified finding: 13.9% of the
 workspace has sigma_min < 0.01, so adaptive damping is load-bearing),
 joint-velocity clamping, and URDF joint-limit clamping.
 
-Self-test (no ROS): pixi run python scripts/cartesian_ik.py
+Self-test (no ROS): pixi run python -m elrobot.control.cartesian_ik
 """
 
 from __future__ import annotations

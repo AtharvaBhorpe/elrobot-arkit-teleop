@@ -5,7 +5,7 @@ stub: conversion round-trip, limit clamp, workspace hold, sigma floor,
 slew/velocity clamp, deadman, freeze latching, torque-enable ordering,
 smoke-mode write suppression, gripper Torque_Limit.
 
-    pixi run python scripts/test_driver_safety.py
+    pixi run python tests/test_driver_safety.py
 """
 
 import time

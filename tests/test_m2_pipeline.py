@@ -6,7 +6,7 @@ phone "up" 25 cm, toggle the gripper, go silent to trip the stream deadman,
 then re-engage far away. All assertions are made from the outside, via
 /joint_states + Pinocchio FK — exactly what rviz sees.
 
-    pixi run python scripts/test_m2_pipeline.py
+    pixi run python tests/test_m2_pipeline.py
 """
 
 import os

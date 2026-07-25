@@ -21,11 +21,11 @@ Safety, enforced every cycle:
 Torque-enable sequence: read present -> write present AS GOAL -> enable.
 The arm's first powered act is holding where it already is.
 
-    pixi run python scripts/elrobot_driver.py [--no-torque]
+    pixi run python -m elrobot.nodes.elrobot_driver [--no-torque]
 
 --no-torque runs everything (reads, conversion, checks) but never enables
 torque and never writes goals: the safe smoke-test mode.
-Ctrl-C leaves torque ON, holding. Release with scripts/watch_ticks.py.
+Ctrl-C leaves torque ON, holding. Release with `pixi run ticks`.
 """
 
 import argparse

@@ -4,7 +4,7 @@ Reads the real pose from /joint_states, adds delta to ONE joint, publishes
 that as /joint_command repeatedly for `hold` seconds (the driver's deadman
 freezes on silence, so a single message would move ~0.2 s worth and stop).
 
-    pixi run python scripts/nudge.py rev_motor_04 --delta 0.09 --hold 2
+    pixi run python -m elrobot.tools.nudge rev_motor_04 --delta 0.09 --hold 2
 """
 
 import argparse

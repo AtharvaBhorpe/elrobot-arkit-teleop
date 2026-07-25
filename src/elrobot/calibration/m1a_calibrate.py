@@ -7,7 +7,7 @@ servo EEPROM + a JSON alongside.
 INTERACTIVE: you move the arm by hand. Must be run from a real terminal
 (record_ranges_of_motion streams a live table and waits on ENTER).
 
-    pixi run python scripts/m1a_calibrate.py
+    pixi run python -m elrobot.calibration.m1a_calibrate
 
 WARNING - this writes homing offsets to servo EEPROM, which changes what
 Present_Position returns. The M1b offset/sign table is derived from those raw

@@ -151,7 +151,7 @@ special-casing the SO-101 applies to `shoulder_pan` and `wrist_roll`.
 
 Calibration is interactive and hand-paced, so it is insensitive to bus latency.
 
-**DONE 2026-07-21** (`scripts/m1a_calibrate.py`, output `calibration/elrobot.json`).
+**DONE 2026-07-21** (`src/elrobot/calibration/m1a_calibrate.py`, output `calibration/elrobot.json`).
 Notes for a re-run:
 
 - lerobot 0.6.1 has no `full_turn_motors` *parameter* — the treatment is done at the
@@ -195,7 +195,7 @@ The gripper needs no URDF correspondence — record ticks at fully-open and full
 compare predicted TCP against the arm's actual pose in the URDF viewer. This catches a
 sign error before the arm swings into the table.
 
-**DONE 2026-07-21** (`scripts/m1b_reconcile.py` derives the table, `scripts/verify_table.py`
+**DONE 2026-07-21** (`src/elrobot/calibration/m1b_reconcile.py` derives the table, `src/elrobot/calibration/verify_table.py`
 re-checks it; output `calibration/urdf_ticks.json`). What was learned:
 
 - **Offsets came from range midpoints, not a posed neutral.** The URDF has no meshes,
@@ -351,10 +351,10 @@ uncalibrated work (M0, M1b) must pass `normalize=False`.
 
 | | Milestone | Gate |
 |---|---|---|
-| M0 | Bus probe — `sync_read`/`sync_write` rate, desync check | ✅ **PASSED 2026-07-21.** p50 1.34 ms read / 0.32 ms write, 0 desync. `scripts/m0_bus_probe.py` |
-| M1a | LeRobot calibration | ✅ **PASSED 2026-07-21.** All 8 within −3% of URDF spans. `scripts/m1a_calibrate.py` |
+| M0 | Bus probe — `sync_read`/`sync_write` rate, desync check | ✅ **PASSED 2026-07-21.** p50 1.34 ms read / 0.32 ms write, 0 desync. `src/elrobot/calibration/m0_bus_probe.py` |
+| M1a | LeRobot calibration | ✅ **PASSED 2026-07-21.** All 8 within −3% of URDF spans. `src/elrobot/calibration/m1a_calibrate.py` |
 | M1b | URDF↔tick offset/sign table | ✅ **CLOSED 2026-07-21.** All 7 signs verified by direct slider-vs-hand tests, after TWO sign fixes (joints 2 and 3 — see Incident). Offsets FK-corroborated at a measured pose. Tools: `verify_table.py`, `watch_ticks.py` |
-| M2 | Receiver + IK + viewer, no hardware | ✅ **PASSED 2026-07-21, live.** Phone drives the model accurately (translation + rotation) after the axis-map retune; 60 pkt/s handled; gripper latch confirmed in logs (gear rotation is the rviz indicator — jaws are stripped from the viz model). Synthetic-phone regression: `scripts/test_m2_pipeline.py` |
+| M2 | Receiver + IK + viewer, no hardware | ✅ **PASSED 2026-07-21, live.** Phone drives the model accurately (translation + rotation) after the axis-map retune; 60 pkt/s handled; gripper latch confirmed in logs (gear rotation is the rviz indicator — jaws are stripped from the viz model). Synthetic-phone regression: `tests/test_m2_pipeline.py` |
 | M3 | Driver node, position-only, hard velocity clamp | arm tracks phone safely |
 | M4 | Full 6-DOF pose + gripper | pick-and-place |
 | M5 | Safety hardening and tuning | all safety rules enforced and tested |

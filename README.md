@@ -55,7 +55,8 @@ First time on new hardware: calibrate first — the guided procedure is the
 | `cams` / `campick` / `rqt-cam` | camera nodes / identify devices / view feeds |
 | `record` / `bag` | LeRobotDataset episodes / mcap rosbag |
 | `bridge` | Foxglove WebSocket on :8765 (`rviz:=false` to drop rviz) |
-| `test` / `lint` | all offline suites / ruff |
+| `ticks` | live joint monitor; releases torque (arm goes limp) |
+| `test` / `lint` / `prove-env` | all offline suites / ruff / env import gate |
 
 Tuning knobs as env prefixes: `PORT= SCALE= ORIENT=0 SMOOTH= MAX_VEL=
 FREEZE= GRIP_LOAD_THRESH= GRIP_SQUEEZE= Z_MIN= R_MAX= RVIZ=0`.

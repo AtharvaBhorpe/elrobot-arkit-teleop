@@ -31,6 +31,8 @@ phone -UDP-> arkit_receiver -/target_pose-> ik -/joint_command-> elrobot_driver 
 | `record`, `bag` | LeRobotDataset episodes / mcap rosbag |
 | `bridge` | Foxglove websocket :8765 (`rviz:=false` to drop rviz) |
 | `view`, `m2` | viz-only modes, no hardware |
+| `ticks` | live joint monitor; RELEASES TORQUE (arm goes limp) |
+| `prove-env`, `test`, `lint` | env import gate / all offline suites / ruff |
 
 Env knobs (prefix any launch): `PORT= SCALE= ORIENT=0 SMOOTH= MAX_VEL=
 FREEZE= GRIP_LOAD_THRESH= GRIP_SQUEEZE= Z_MIN= R_MAX= RVIZ=0`.

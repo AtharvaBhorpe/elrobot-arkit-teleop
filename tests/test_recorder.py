@@ -4,7 +4,7 @@ Publishes synthetic streams (distinct image patterns per camera, known joint
 values), runs episode_recorder --auto 2 as a subprocess, then loads the
 dataset back and checks frame count, shapes, and that the values round-trip.
 
-    pixi run python scripts/test_recorder.py
+    pixi run python tests/test_recorder.py
 """
 
 import os

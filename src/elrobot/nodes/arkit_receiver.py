@@ -12,7 +12,7 @@ Interaction (finger count from ZIG SIM's touch array):
   200 ms silence clutch force-released (stream deadman; the driver has its
                  own freeze in M3+ — this one just guarantees a re-zero).
 
-    pixi run python scripts/arkit_receiver.py
+    pixi run python -m elrobot.nodes.arkit_receiver
 """
 
 import argparse

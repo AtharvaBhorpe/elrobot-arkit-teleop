@@ -9,7 +9,7 @@ Publishes:
                   where there is no hardware to report real state. In M3 the
                   driver owns /joint_states; run with --no-sim-state then.
 
-    pixi run python scripts/ik_node.py
+    pixi run python -m elrobot.nodes.ik_node
 """
 
 import argparse
