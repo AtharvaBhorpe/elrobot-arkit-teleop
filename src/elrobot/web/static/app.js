@@ -67,12 +67,14 @@ function setPill(id, ok, text) {
   p.querySelector("span:last-child").textContent = text;
 }
 
-document.querySelectorAll('nav[role="tablist"] [role="tab"]').forEach((btn) => {
+// Calibrate / Record are independent toggles, not tabs: the cameras and the
+// 3D view are always on screen, and these panels open below them on demand.
+document.querySelectorAll(".toggles button[data-panel]").forEach((btn) => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll('nav[role="tablist"] [role="tab"]')
-      .forEach((b) => b.setAttribute("aria-selected", String(b === btn)));
-    document.querySelectorAll(".panel").forEach((p) =>
-      p.classList.toggle("active", p.id === `tab-${btn.dataset.tab}`));
+    const panel = document.getElementById(`panel-${btn.dataset.panel}`);
+    const open = !panel.classList.contains("active");
+    panel.classList.toggle("active", open);
+    btn.setAttribute("aria-pressed", String(open));
   });
 });
 

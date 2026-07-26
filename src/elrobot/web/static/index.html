@@ -29,18 +29,9 @@
     is NOT disabled, both command streams are being sent</div>
 
   <main>
-    <div class="card">
-      <div id="scene3d"></div>
-    </div>
-
-    <div class="deckwrap">
-      <nav role="tablist">
-        <button role="tab" aria-selected="true" data-tab="cameras">Cameras</button>
-        <button role="tab" data-tab="calibrate">Calibrate</button>
-        <button role="tab" data-tab="record">Record</button>
-      </nav>
-
-      <div class="panel active" id="tab-cameras">
+    <div class="stage">
+      <!-- Always visible: both cameras side by side above the 3D view -->
+      <div class="cams">
         <div class="card cam-card">
           <div class="cam-frame">
             <img id="cam-wrist">
@@ -54,7 +45,20 @@
           <div class="cam-label">ext</div>
         </div>
       </div>
-    <div class="panel" id="tab-calibrate">
+
+      <div class="card viewer">
+        <div id="scene3d"></div>
+      </div>
+
+      <!-- On-demand: toggled panels open below the 3D view -->
+      <div class="toggles">
+        <button id="toggle-calibrate" aria-pressed="false"
+                data-panel="calibrate">Calibrate</button>
+        <button id="toggle-record" aria-pressed="false"
+                data-panel="record">Record</button>
+      </div>
+
+    <div class="panel" id="panel-calibrate">
       <div class="card" style="padding: 16px;">
         <p id="calib-status" class="muted" style="margin: 0 0 12px;">idle</p>
         <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;">
@@ -89,11 +93,12 @@
         </div>
       </dialog>
     </div>
-    <div class="panel" id="tab-record">
-      <div class="card" style="padding: 16px; display: flex; align-items: center;
+    <div class="panel" id="panel-record">
+      <div class="card" style="padding: 14px 16px; display: flex; align-items: center;
                                 gap: 24px; flex-wrap: wrap;">
         <div>
-          <div style="font-size: 32px; font-weight: 600;" id="record-count">0</div>
+          <div style="font-size: 28px; font-weight: 600; line-height: 1.1;"
+               id="record-count">0</div>
           <div class="muted">episodes</div>
         </div>
         <div style="display: flex; gap: 8px;">
@@ -104,7 +109,7 @@
         <span class="muted" id="record-frames"></span>
       </div>
     </div>
-    </div><!-- /.deckwrap -->
+    </div><!-- /.stage -->
 
     <div class="card rail">
       <h3 class="rail-title">Joints</h3>

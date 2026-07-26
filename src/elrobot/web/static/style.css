@@ -165,9 +165,33 @@ main {
   flex: 1;
   min-height: 0;              /* lets children shrink instead of overflowing */
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) 300px;
+  grid-template-columns: minmax(0, 1fr) 300px;
   gap: 12px;
   padding: 12px 16px;
+}
+
+/* Left column: cameras row (fixed), 3D viewer (fills), toggled panels */
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+/* Both feeds side by side, always visible, above the 3D view. Height is
+   viewport-relative so the 3D view keeps the bulk of the space on tall
+   screens without the cameras collapsing to nothing on short ones. */
+.cams {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  height: clamp(150px, 27vh, 320px);
+}
+
+.viewer {
+  flex: 1;
+  min-height: 0;
 }
 
 /* Narrow screens: fall back to scrolling rather than crushing everything */
@@ -179,7 +203,7 @@ main {
   main {
     grid-template-columns: 1fr;
   }
-  #scene3d {
+  .viewer {
     min-height: 380px;
   }
 }
@@ -274,65 +298,36 @@ body:not([data-control]) .joint output {
   color: var(--muted-foreground);
 }
 
-nav[role="tablist"] {
+/* Calibrate / Record toggle buttons - independent on/off, not tabs.
+   Cameras and the 3D view are always on screen; these open below them. */
+.toggles {
   display: flex;
-  gap: 4px;
-  padding: 3px;
-  background-color: var(--muted);
-  border-radius: calc(var(--radius) + 2px);
-  width: fit-content;
+  gap: 8px;
   flex: none;
 }
 
-button[role="tab"] {
-  border: none;
-  background-color: transparent;
-  padding: 8px 16px;
-  font-size: 13px;
-  cursor: pointer;
-  border-radius: var(--radius);
-  color: var(--muted-foreground);
-  transition: all 0.2s;
-}
-
-button[role="tab"][aria-selected="true"] {
-  background-color: var(--card);
-  color: var(--foreground);
-  box-shadow: var(--shadow);
-}
-
-/* Middle column: tab strip on top, active panel fills the rest */
-.deckwrap {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 0;
+.toggles button[aria-pressed="true"] {
+  background-color: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
 }
 
 .panel {
   display: none;
-  padding: 12px;
-  background-color: var(--card);
-  border: 1px solid var(--border);
-  border-radius: calc(var(--radius) + 4px);
-  box-shadow: var(--shadow);
-  flex: 1;
+  flex: none;                 /* opens at content height, doesn't fight the viewer */
   min-height: 0;
+  max-height: 34vh;
   overflow-y: auto;           /* long panel content scrolls in place */
 }
 
-/* Cameras panel: the two feeds stack and split the column's height */
-.panel.active#tab-cameras {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+.panel.active {
+  display: block;
 }
 
 .cam-card {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 0;
+  min-height: 0;              /* grid child of .cams; height comes from the row */
   overflow: hidden;
 }
 
@@ -349,7 +344,11 @@ button[role="tab"][aria-selected="true"] {
 .cam-frame img {
   max-width: 100%;
   max-height: 100%;
-  object-fit: contain;        /* keep aspect, never crop or stretch */
+  object-fit: contain;        /* Show the WHOLE frame, gutters and all. Not
+                                 'cover': cropping would mean the operator
+                                 composes grasps from a narrower view than the
+                                 recorder actually saves, so what you see here
+                                 would not match what a policy trains on. */
 }
 
 .cam-label {
@@ -358,10 +357,6 @@ button[role="tab"][aria-selected="true"] {
   text-align: center;
   font-size: 12px;
   color: var(--muted-foreground);
-}
-
-.panel.active {
-  display: block;
 }
 
 button {
