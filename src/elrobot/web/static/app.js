@@ -213,3 +213,29 @@ function recordCmd(cmd) {
 recordEl.start.addEventListener("click", () => recordCmd("start"));
 recordEl.stop.addEventListener("click", () => recordCmd("stop"));
 recordEl.discard.addEventListener("click", () => recordCmd("discard"));
+
+// ── camera polling ────────────────────────────────────────────────────
+// Not <img src="/cam/x"> (multipart/x-mixed-replace): recent Chromium
+// versions unreliably paint that inside <img> - confirmed live (correct
+// headers/framing, real data transferring, image never visually updating).
+// fetch() + Blob + createObjectURL works the same in every browser.
+
+function pollCamera(name) {
+  const img = document.getElementById(`cam-${name}`);
+  let lastUrl = null;
+  async function tick() {
+    try {
+      const blob = await fetch(`/cam/${name}/frame`).then((r) => r.blob());
+      const url = URL.createObjectURL(blob);
+      img.src = url;
+      if (lastUrl) URL.revokeObjectURL(lastUrl);   // don't leak object URLs
+      lastUrl = url;
+    } catch {
+      // transient fetch failure - next tick retries, no need to surface it
+    }
+  }
+  tick();
+  setInterval(tick, 1000 / 15);
+}
+pollCamera("wrist");
+pollCamera("ext");

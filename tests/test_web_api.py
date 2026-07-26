@@ -109,6 +109,22 @@ def test_mjpeg_placeholder_when_no_camera():
     assert c.get("/cam/nope").status_code == 404
 
 
+def test_cam_frame_endpoint_returns_single_jpeg():
+    # The cockpit UI polls this instead of relying on multipart/x-mixed-
+    # replace inside <img>, which recent Chromium versions don't reliably
+    # paint (confirmed live: correct headers/framing, data genuinely
+    # transferring, image never visually updating).
+    b = FakeBridge()
+    b.latest_jpeg = {}
+    c = TestClient(create_app(b))
+    r = c.get("/cam/wrist/frame")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/jpeg"
+    assert r.headers["cache-control"] == "no-store"
+    assert r.content[:2] == b"\xff\xd8"       # JPEG SOI, not multipart-wrapped
+    assert c.get("/cam/nope/frame").status_code == 404
+
+
 def test_static_urdf_and_meshes_served():
     b = FakeBridge()
     c = TestClient(create_app(b))
@@ -215,6 +231,7 @@ if __name__ == "__main__":
     test_control_toggle_and_seed()
     test_ws_streams_state_and_gates_commands()
     test_mjpeg_placeholder_when_no_camera()
+    test_cam_frame_endpoint_returns_single_jpeg()
     test_static_urdf_and_meshes_served()
     test_calib_refuses_while_driver_alive()
     test_calib_eeprom_needs_typed_confirmation()

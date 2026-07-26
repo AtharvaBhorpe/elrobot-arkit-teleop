@@ -226,8 +226,29 @@ def create_app(bridge, bus_factory=None) -> FastAPI:
             send_task.cancel()
             # tab gone -> stop commanding; driver deadman freezes the arm
 
+    def _current_jpeg(name: str) -> bytes:
+        jpeg, ts = getattr(bridge, "latest_jpeg", {}).get(name, (None, 0.0))
+        if jpeg is None or time.monotonic() - ts > 2.0:
+            jpeg = _placeholder(name)
+        return jpeg
+
+    @app.get("/cam/{name}/frame")
+    def cam_frame(name: str):
+        # Single-frame endpoint the cockpit UI polls (see app.js): recent
+        # Chromium/Blink versions unreliably paint multipart/x-mixed-replace
+        # inside <img> - confirmed live (correct headers, correct multipart
+        # framing, tens of MB genuinely transferred, image never visually
+        # updated). fetch() + Blob + createObjectURL works everywhere.
+        if name not in ("wrist", "ext"):
+            raise HTTPException(404)
+        return Response(content=_current_jpeg(name), media_type="image/jpeg",
+                        headers={"Cache-Control": "no-store"})
+
     @app.get("/cam/{name}")
     def cam(name: str):
+        # Multipart MJPEG stream - kept for external viewers (VLC, mjpeg
+        # clients) that handle it fine; the cockpit UI itself uses
+        # /cam/{name}/frame above instead, for the reason noted there.
         if name not in ("wrist", "ext"):
             raise HTTPException(404)
 
@@ -237,12 +258,8 @@ def create_app(bridge, bus_factory=None) -> FastAPI:
             # generator's asyncio.sleep, closes cleanly on early client
             # disconnect instead of leaking a live task in the event loop
             while True:
-                jpeg, ts = getattr(bridge, "latest_jpeg", {}).get(
-                    name, (None, 0.0))
-                if jpeg is None or time.monotonic() - ts > 2.0:
-                    jpeg = _placeholder(name)
                 yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
-                       + jpeg + b"\r\n")
+                       + _current_jpeg(name) + b"\r\n")
                 time.sleep(1 / 15)
 
         return StreamingResponse(
