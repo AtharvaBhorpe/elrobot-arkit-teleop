@@ -51,8 +51,12 @@ FREEZE= GRIP_LOAD_THRESH= GRIP_SQUEEZE= Z_MIN= R_MAX= RVIZ=0`.
    Limit` per motor exist nowhere else once overwritten. `pixi run
    calib-backup` snapshots both halves into one file (they must be restored
    together or the table describes servos it no longer matches);
-   `pixi run calib-restore` puts them back. The web wizard takes this
-   snapshot automatically at preflight and refuses to start without one.
+   `pixi run calib-restore` puts them back (torque off, ARM GOES LIMP: the
+   Feetech `Lock` register gates EEPROM writes and lerobot ties it to torque,
+   so a locked servo discards the write and still answers OK - restore reads
+   back and refuses rather than trusting the status byte). The web wizard
+   takes this snapshot automatically at preflight and refuses to start
+   without one.
 2. **Tests never touch the default DDS domain**: integration tests pin
    `ROS_DOMAIN_ID=77`. A test once published /joint_command at the LIVE
    driver. Any new test that creates ROS nodes must set a domain.

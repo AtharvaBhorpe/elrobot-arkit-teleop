@@ -92,6 +92,49 @@ def test_backup_round_trips_the_eeprom_the_wizard_destroys():
     assert bus.calib == before, "restore did not put the old EEPROM back"
 
 
+def test_restore_unlocks_eeprom_before_writing():
+    """Feetech gates EEPROM writes on `Lock`, which lerobot ties to torque.
+    A driver exit leaves torque ON, so a restore that does not disable it
+    first writes into locked EEPROM: the servo discards the value and still
+    answers OK. StubBus starts locked precisely to catch that."""
+    bus = StubBus({f"rev_motor_{i:02d}": 2000 for i in range(1, 9)})
+    for n in bus.calib:
+        bus.calib[n]["homing_offset"] = 111
+    assert bus.locked, "stub must start locked - that is a driver's exit state"
+
+    with tempfile.TemporaryDirectory() as d:
+        snap = backup.load(backup.snapshot(bus, root=d))
+    bus.set_half_turn_homings()
+    backup.restore(bus, snap, files=False)
+
+    assert bus.torque_disabled and not bus.locked
+    assert all(c["homing_offset"] == 111 for c in bus.calib.values())
+
+
+def test_restore_catches_a_write_that_was_silently_ignored():
+    """The read-back backstop: if the EEPROM never took the value, restore
+    must raise rather than report success - and must NOT go on to overwrite
+    the calibration files, which still match the servos' real state."""
+    class StubbornBus(StubBus):
+        def disable_torque(self):        # a motor that stays locked
+            self.torque_disabled = True
+
+    bus = StubbornBus({f"rev_motor_{i:02d}": 2000 for i in range(1, 9)})
+    for n in bus.calib:
+        bus.calib[n]["homing_offset"] = 222
+    with tempfile.TemporaryDirectory() as d:
+        snap = backup.load(backup.snapshot(bus, root=d))
+    bus.set_half_turn_homings()
+
+    try:
+        backup.restore(bus, snap, files=True)   # files=True: must not reach it
+    except RuntimeError as e:
+        assert "read-back" in str(e)
+        assert all(c["homing_offset"] != 222 for c in bus.calib.values())
+    else:
+        raise AssertionError("reported success on an EEPROM that never changed")
+
+
 def test_backup_refuses_a_protocol_that_cannot_read_offsets():
     """read_calibration() silently reports homing_offset=0 on protocol 1.
     A backup full of zeros looks fine and is worthless, so capture() must
@@ -145,6 +188,8 @@ if __name__ == "__main__":
     test_derive_table_midpoint_offsets()
     test_derive_table_asymmetric_urdf_range()
     test_backup_round_trips_the_eeprom_the_wizard_destroys()
+    test_restore_unlocks_eeprom_before_writing()
+    test_restore_catches_a_write_that_was_silently_ignored()
     test_backup_refuses_a_protocol_that_cannot_read_offsets()
     test_backup_never_clobbers_an_existing_snapshot()
     test_wizard_snapshots_before_it_can_write_and_refuses_without_one()

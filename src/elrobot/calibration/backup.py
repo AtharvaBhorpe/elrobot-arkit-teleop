@@ -26,11 +26,12 @@ surface until the day it is needed.
 
     pixi run calib-backup                 # snapshot now
     pixi run calib-backup --list
-    pixi run calib-restore                # restore the newest snapshot
+    pixi run calib-restore                # restore the newest snapshot (LIMP)
     pixi run calib-restore --file <path>
 
 The driver must be stopped for either (hard rule 3) - the serial open is
-what enforces it.
+what enforces it. Backup only reads, so it leaves torque alone; RESTORE must
+disable torque to unlock the EEPROM, so the arm goes limp (hard rule 5).
 """
 
 import argparse
@@ -98,9 +99,32 @@ def restore(bus, snap: dict, files=True) -> dict:
     a file restored against un-restored servos is the incoherent state this
     module exists to prevent. If the bus write throws, the files on disk are
     still the ones that match the servos' CURRENT state.
+
+    **Torque is disabled first, and this is not optional.** On Feetech STS
+    servos the `Lock` register gates EEPROM writes, and lerobot ties it to
+    torque: `enable_torque()` sets Lock=1, `disable_torque()` sets Lock=0.
+    `write_calibration()` never touches Lock - it assumes torque is already
+    off (m1a_calibrate and the web wizard both disable it first). A driver
+    exit leaves torque ON (hard rule 5), so restoring straight after one
+    would write into locked EEPROM: the servo discards the value and still
+    answers with a normal status packet, i.e. a restore that reports success
+    and changed nothing. THE ARM GOES LIMP when this is called.
+
+    The read-back below is the backstop for that whole class of failure -
+    silent-write-ignored is not something to detect by trusting a status byte.
     """
     calib = {n: MotorCalibration(**c) for n, c in snap["motors"].items()}
+    bus.disable_torque()          # unlocks EEPROM; arm goes limp
     bus.write_calibration(calib)
+
+    after = bus.read_calibration()
+    bad = [n for n, want in calib.items()
+           if n not in after or vars(after[n]) != vars(want)]
+    if bad:
+        raise RuntimeError(
+            f"EEPROM read-back does not match for {', '.join(sorted(bad))} - "
+            f"the write was rejected or ignored; calibration files were NOT "
+            f"touched. Is torque really off?")
     written = []
     if files:
         for p, text in snap.get("files", {}).items():
@@ -148,6 +172,8 @@ def _cli():
         print(f"restore {path} (taken {snap['created']}, port {snap['port']})")
         print(f"  {len(snap['motors'])} motors -> Homing_Offset, "
               f"Min/Max_Position_Limit")
+        print("  TORQUE WILL BE DISABLED (EEPROM is locked while torque is "
+              "on) - THE ARM WILL GO LIMP. Support it or rest it low first.")
         for p in (snap.get("files") or {}) if not a.no_files else []:
             print(f"  overwrite {p}")
         if not a.yes and input("proceed? type yes: ").strip() != "yes":
@@ -155,7 +181,8 @@ def _cli():
         done = restore(bus, snap, files=not a.no_files)
         print(f"restored {len(done['motors'])} motors, "
               f"{len(done['files'])} files")
-        print("Torque was never enabled; power-cycle not required.")
+        print("Torque is OFF and the arm is limp - the driver re-enables it "
+              "on its next start. Verify with a tape measure in a bent pose.")
     finally:
         bus.disconnect()
 

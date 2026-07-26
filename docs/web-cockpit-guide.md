@@ -233,6 +233,14 @@ pixi run calib-backup --list        # see them all
 pixi run calib-restore --file calibration/backups/calib-20260726T2140.json
 ```
 
+> **Restore makes the arm go limp — support it first.** Feetech gates EEPROM
+> writes on a `Lock` register that lerobot ties to torque, so the values
+> cannot go back while torque is on. Backup is read-only and leaves torque
+> alone; only restore has this cost. Restore then reads every register back
+> and refuses (leaving your files untouched) if the servos did not take the
+> write — a locked EEPROM discards it *and still answers OK*, so a status
+> byte is not evidence.
+
 The wizard **refuses to start if it cannot write that snapshot** — no backup,
 no destructive write. Restore puts the EEPROM and the json back *together*;
 they are not independent, and restoring one alone leaves a table describing

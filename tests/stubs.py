@@ -29,6 +29,10 @@ class StubBus:
         self.writes = []
         self.connected = False
         self.torque_disabled = False
+        # Feetech `Lock` (addr 55) gates EEPROM writes and lerobot ties it to
+        # torque. Start LOCKED: that is the state a driver exit leaves the
+        # arm in, and the one where a naive restore silently does nothing.
+        self.locked = True
         self.set_half_turn_homings_calls = 0   # EEPROM write order matters
         self.calib = {n: {"id": i + 1, "drive_mode": 0, "homing_offset": 0,
                           "range_min": 0, "range_max": MAX_TICKS}
@@ -48,6 +52,7 @@ class StubBus:
 
     def disable_torque(self):
         self.torque_disabled = True
+        self.locked = False          # real disable_torque() writes Lock=0
 
     def set_half_turn_homings(self):
         self.set_half_turn_homings_calls += 1
@@ -63,4 +68,6 @@ class StubBus:
         return {n: _Calib(**c) for n, c in self.calib.items()}
 
     def write_calibration(self, calibration_dict, cache=True):
+        if self.locked:
+            return       # servo discards the write and still answers OK
         self.calib = {n: dict(vars(c)) for n, c in calibration_dict.items()}
