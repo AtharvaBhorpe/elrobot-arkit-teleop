@@ -56,11 +56,14 @@ class WebBridge:
         class _N(Node):
             pass
 
+        from std_msgs.msg import String
+
         self.node = _N("web_cockpit")
         self.latest_q: dict[str, float] = {}
         self.latest_stamp = 0.0
         self.control_on = False
         self.latest_jpeg: dict[str, tuple[bytes, float]] = {}
+        self.record_status: dict | None = None
         self.node.create_subscription(
             JointState, "/joint_states", self._on_js, 1)
         for name, topic in (("wrist", "/wrist_cam/image"),
@@ -68,6 +71,8 @@ class WebBridge:
             self.node.create_subscription(
                 Image, topic,
                 lambda m, n=name: self._on_img(m, n), 1)
+        self.node.create_subscription(String, "/record/status", self._on_record, 1)
+        self._record_pub = self.node.create_publisher(String, "/record/cmd", 1)
         self._pub = self.node.create_publisher(JointState, "/joint_command", 1)
         self._spin = threading.Thread(
             target=rclpy.spin, args=(self.node,), daemon=True)
@@ -76,6 +81,14 @@ class WebBridge:
     def _on_js(self, msg):
         self.latest_q = dict(zip(msg.name, msg.position))
         self.latest_stamp = time.monotonic()
+
+    def _on_record(self, msg):
+        import json
+        self.record_status = json.loads(msg.data)
+
+    def publish_record_cmd(self, cmd: str):
+        from std_msgs.msg import String
+        self._record_pub.publish(String(data=cmd))
 
     def _on_img(self, msg, name):
         frame = np.frombuffer(msg.data, dtype=np.uint8).reshape(
@@ -174,6 +187,14 @@ def create_app(bridge, bus_factory=None) -> FastAPI:
         return {"control_on": bridge.control_on,
                 "seed": dict(bridge.latest_q) if bridge.control_on else {}}
 
+    @app.post("/api/record")
+    def record(body: dict):
+        cmd = body.get("cmd")
+        if cmd not in ("start", "stop", "discard"):
+            raise HTTPException(400, "cmd must be start, stop, or discard")
+        bridge.publish_record_cmd(cmd)
+        return {"sent": cmd}
+
     @app.websocket("/ws")
     async def ws(sock: WebSocket):
         await sock.accept()
@@ -188,6 +209,7 @@ def create_app(bridge, bus_factory=None) -> FastAPI:
                     "control_on": bridge.control_on,
                     "commanders": bridge.commanders(),
                     "driver_alive": alive,
+                    "record": getattr(bridge, "record_status", None),
                 })
                 await asyncio.sleep(1 / 30)
 

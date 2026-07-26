@@ -41,6 +41,7 @@ function connect() {
         rows[n].inp.value = m.joints[n];
         rows[n].out.textContent = m.joints[n].toFixed(2);
       }
+    renderRecord(m.record);
   };
   ws.onclose = () => { setControl(false); setTimeout(connect, 1000); };
 }
@@ -180,3 +181,35 @@ calibEl.eepromConfirm.addEventListener("click", async () => {
 
 refreshCalib();
 setInterval(refreshCalib, 2000);
+
+// ── record panel ───────────────────────────────────────────────────────
+// Status comes from the WS "record" field (relayed from /record/status by
+// the backend); buttons just POST /api/record and let the next WS tick
+// reconcile the UI - no separate polling needed.
+
+const recordEl = {
+  count: document.getElementById("record-count"),
+  frames: document.getElementById("record-frames"),
+  start: document.getElementById("record-start"),
+  stop: document.getElementById("record-stop"),
+  discard: document.getElementById("record-discard"),
+};
+
+function renderRecord(status) {
+  const recording = !!(status && status.recording);
+  recordEl.count.textContent = status ? status.episodes : "0";
+  recordEl.frames.textContent = recording ? `recording - ${status.frames} frames` : "";
+  recordEl.start.disabled = recording;
+  recordEl.stop.disabled = !recording;
+  recordEl.discard.disabled = !recording;
+}
+renderRecord(null);
+
+function recordCmd(cmd) {
+  fetch("/api/record", { method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ cmd }) }).catch(() => {});
+}
+recordEl.start.addEventListener("click", () => recordCmd("start"));
+recordEl.stop.addEventListener("click", () => recordCmd("stop"));
+recordEl.discard.addEventListener("click", () => recordCmd("discard"));

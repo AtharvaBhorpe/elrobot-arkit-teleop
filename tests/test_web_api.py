@@ -24,12 +24,16 @@ class FakeBridge:
         self.latest_stamp = time.monotonic()
         self.control_on = False
         self.published = []          # (dict) commands captured
+        self.record_cmds = []        # str commands captured
 
     def commanders(self):
         return 0
 
     def publish_command(self, positions: dict):
         self.published.append(dict(positions))
+
+    def publish_record_cmd(self, cmd: str):
+        self.record_cmds.append(cmd)
 
 
 def test_status_reports_joints_and_flags():
@@ -184,6 +188,16 @@ def test_calib_full_flow_writes_table():
         Path(scratch).unlink(missing_ok=True)
 
 
+def test_record_relays_valid_commands_only():
+    b = FakeBridge()
+    c = TestClient(create_app(b))
+    r = c.post("/api/record", json={"cmd": "start"})
+    assert r.status_code == 200 and b.record_cmds == ["start"]
+    r = c.post("/api/record", json={"cmd": "bogus"})
+    assert r.status_code == 400
+    assert b.record_cmds == ["start"]                  # bogus cmd never relayed
+
+
 if __name__ == "__main__":
     test_status_reports_joints_and_flags()
     test_control_toggle_and_seed()
@@ -193,4 +207,5 @@ if __name__ == "__main__":
     test_calib_refuses_while_driver_alive()
     test_calib_eeprom_needs_typed_confirmation()
     test_calib_full_flow_writes_table()
+    test_record_relays_valid_commands_only()
     print("WEB API TESTS PASSED")

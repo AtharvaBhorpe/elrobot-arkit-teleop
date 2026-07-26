@@ -94,7 +94,19 @@
       </dialog>
     </div>
     <div class="panel" id="tab-record">
-      <p>Record panel - wired in Task 8</p>
+      <div class="card" style="padding: 16px; display: flex; align-items: center;
+                                gap: 24px; flex-wrap: wrap;">
+        <div>
+          <div style="font-size: 32px; font-weight: 600;" id="record-count">0</div>
+          <div class="muted">episodes</div>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button id="record-start" class="primary">Start episode</button>
+          <button id="record-stop" disabled>Stop &amp; keep</button>
+          <button id="record-discard" disabled>Discard</button>
+        </div>
+        <span class="muted" id="record-frames"></span>
+      </div>
     </div>
   </div>
 

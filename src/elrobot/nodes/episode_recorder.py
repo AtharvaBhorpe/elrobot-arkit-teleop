@@ -13,6 +13,9 @@ cam nodes up:
 
 ENTER starts/stops an episode; q + ENTER saves everything and exits.
 --auto N records one N-second episode with no keyboard (used by the test).
+Also controllable over ROS: /record/cmd (std_msgs/String, "start"|"stop"|
+"discard") in, /record/status (JSON: recording/episodes/frames) out at 1 Hz
+- the web cockpit's Record panel uses this, terminal ENTER keeps working.
 
 Frames are skipped (with a warn) while any stream is missing or stale, so a
 dead camera yields a short episode, not silently corrupt data.
@@ -23,6 +26,7 @@ import os
 os.environ.setdefault("HF_HUB_OFFLINE", "1")  # local datasets, never the network
 
 import argparse
+import json
 import threading
 import time
 
@@ -30,6 +34,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, JointState
+from std_msgs.msg import String
 
 from elrobot.control.cartesian_ik import ARM_JOINTS, GRIPPER_JOINT  # noqa: E402
 
@@ -45,6 +50,8 @@ class Recorder(Node):
         self.dataset = None
         self.recording = False
         self.n_frames = 0
+        self.episodes = 0
+        self._starting = False   # guards start() against overlapping calls
 
         self.create_subscription(Image, "/wrist_cam/image",
                                  lambda m: self._img(m, "wrist"), 1)
@@ -54,7 +61,10 @@ class Recorder(Node):
                                  lambda m: self._joints(m, "state"), 1)
         self.create_subscription(JointState, "/joint_command",
                                  lambda m: self._joints(m, "action"), 1)
+        self.create_subscription(String, "/record/cmd", self._on_cmd, 1)
+        self._status_pub = self.create_publisher(String, "/record/status", 1)
         self.create_timer(1.0 / args.fps, self._tick)
+        self.create_timer(1.0, self._status_tick)
 
     def _img(self, msg, key):
         a = np.frombuffer(msg.data, dtype=np.uint8).reshape(
@@ -140,9 +150,47 @@ class Recorder(Node):
         self.recording = False
         if self.dataset is not None and self.n_frames > 0:
             self.dataset.save_episode()
+            self.episodes += 1
             self.get_logger().info(f"episode saved ({self.n_frames} frames)")
         else:
             self.get_logger().warning("nothing recorded, nothing saved")
+
+    def discard(self):
+        self.recording = False
+        if self.dataset is not None:
+            self.dataset.clear_episode_buffer()
+        self.get_logger().info("episode discarded")
+
+    def _on_cmd(self, msg):
+        cmd = msg.data.strip().lower()
+        if cmd == "start" and not self.recording and not self._starting:
+            # start() blocks up to 10s on dataset creation - NEVER in the
+            # executor thread (the zero-frame incident), so thread it. The
+            # keyboard path already runs start()/stop() from a thread other
+            # than rclpy.spin()'s (see main()), so this isn't a new pattern.
+            # _starting guards against a second "start" arriving (e.g. a
+            # laggy double-click, or a caller retrying) while the first is
+            # still mid-wait: self.recording only flips True at the very
+            # end of start(), so without this guard a second start() could
+            # run concurrently and reset self.n_frames = 0 after real
+            # frames from the first call had already begun accumulating.
+            self._starting = True
+
+            def run():
+                try:
+                    self.start()
+                finally:
+                    self._starting = False
+            threading.Thread(target=run, daemon=True).start()
+        elif cmd == "stop" and self.recording:
+            self.stop()
+        elif cmd == "discard" and self.recording:
+            self.discard()
+
+    def _status_tick(self):
+        self._status_pub.publish(String(data=json.dumps({
+            "recording": self.recording, "episodes": self.episodes,
+            "frames": self.n_frames})))
 
     def close(self):
         if self.dataset is not None:

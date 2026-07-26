@@ -12,10 +12,13 @@ import os
 os.environ.setdefault("ROS_DOMAIN_ID", "77")  # NEVER touch a live session's DDS graph
 os.environ.setdefault("HF_HUB_OFFLINE", "1")  # local datasets, never the network
 
+import argparse
+import json
 import shutil
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -47,7 +50,7 @@ def js_msg(node, values):
     return m
 
 
-def main():
+def test_subprocess_auto_episode():
     if ROOT.exists():
         shutil.rmtree(ROOT)
     rclpy.init()
@@ -99,8 +102,99 @@ def main():
     assert abs(mean255(wr) - 50) < 12, f"wrist pixel mean {mean255(wr)}"
     assert abs(mean255(ex) - 200) < 12, f"external pixel mean {mean255(ex)}"
     print("images round-trip with correct per-camera content")
-    print("\nRECORDER TEST PASSED")
+    print("subprocess --auto scenario PASSED")
     rclpy.try_shutdown()
+
+
+def test_record_cmd_topic():
+    """/record/cmd start/stop drives the recorder the same as ENTER does.
+
+    Runs the Recorder in-process (not a subprocess): racing a subprocess's
+    stdin against a ROS command is fragile - without --auto the recorder's
+    main() blocks on input(), and a piped/closed stdin on a subprocess
+    hits EOF almost immediately, likely before the fake /record/cmd message
+    even has time to arrive. In-process sidesteps that timing race entirely
+    and exercises the exact same Recorder._on_cmd/_status_tick code.
+    """
+    from std_msgs.msg import String
+
+    from elrobot.nodes.episode_recorder import Recorder
+
+    root = Path("data/test_episodes_cmd")
+    if root.exists():
+        shutil.rmtree(root)
+    rclpy.init()
+    try:
+        fake = rclpy.create_node("fake_streams_cmd")
+        pubs = {
+            "wrist": fake.create_publisher(Image, "/wrist_cam/image", 1),
+            "ext": fake.create_publisher(Image, "/ext_cam/image", 1),
+            "state": fake.create_publisher(JointState, "/joint_states", 1),
+            "action": fake.create_publisher(JointState, "/joint_command", 1),
+            "cmd": fake.create_publisher(String, "/record/cmd", 1),
+        }
+        fake.create_timer(1 / 30, lambda: (
+            pubs["wrist"].publish(img_msg(fake, 50)),
+            pubs["ext"].publish(img_msg(fake, 200)),
+            pubs["state"].publish(js_msg(fake, [0.1] * 8)),
+            pubs["action"].publish(js_msg(fake, [0.2] * 8))))
+
+        args = argparse.Namespace(fps=30.0, repo_id="local/elrobot_teleop",
+                                  root=str(root), task="test")
+        node = Recorder(args)
+
+        statuses = []
+        fake.create_subscription(String, "/record/status",
+                                 lambda m: statuses.append(json.loads(m.data)), 5)
+
+        executor = rclpy.executors.MultiThreadedExecutor()
+        executor.add_node(fake)
+        executor.add_node(node)
+        spin = threading.Thread(target=executor.spin, daemon=True)
+        spin.start()
+
+        deadline = time.monotonic() + 10.0
+        while not node.recording and time.monotonic() < deadline:
+            pubs["cmd"].publish(String(data="start"))
+            time.sleep(0.1)
+        assert node.recording, "recorder never started via /record/cmd"
+
+        # _status_tick fires once per second - hold recording comfortably
+        # past that so at least one /record/status message is captured
+        # before we stop, not just enough frames
+        time.sleep(1.5)
+
+        deadline = time.monotonic() + 10.0
+        while node.recording and time.monotonic() < deadline:
+            pubs["cmd"].publish(String(data="stop"))
+            time.sleep(0.1)
+        assert not node.recording, "recorder never stopped via /record/cmd"
+
+        # recording flips False at the START of stop(), before the
+        # (possibly slow) dataset.save_episode() call that increments
+        # episodes - wait for the actual completion signal, not just for
+        # recording to flip, or this races the encoder flush
+        deadline = time.monotonic() + 10.0
+        while node.episodes < 1 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert node.episodes == 1, "save_episode() never completed in time"
+
+        time.sleep(1.2)   # let one more /record/status tick land
+        assert any(s["recording"] for s in statuses), (
+            "no /record/status message showed recording=true")
+        assert statuses[-1]["episodes"] == 1
+
+        node.close()
+        executor.shutdown()
+    finally:
+        rclpy.try_shutdown()
+    print("/record/cmd + /record/status PASSED")
+
+
+def main():
+    test_subprocess_auto_episode()
+    test_record_cmd_topic()
+    print("\nRECORDER TEST PASSED")
     return 0
 
 
