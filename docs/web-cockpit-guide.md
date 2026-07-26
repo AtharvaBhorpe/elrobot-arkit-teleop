@@ -2,7 +2,7 @@
 
 A browser cockpit for the Elrobot arm: live 3D model, both camera feeds,
 joint sliders that drive the real arm, a guided calibration wizard, and
-episode recording. Runs at `http://localhost:8080`.
+episode recording + replay. Runs at `http://localhost:8080`.
 
 > **The cockpit never touches the serial port.** It is an ordinary ROS 2
 > command source, exactly like the phone. Every safety mechanism — velocity
@@ -75,6 +75,13 @@ sliders.
 | `driver live` / `driver down` | Is anything publishing `/joint_states`? Green means the arm's real state is arriving. |
 | `state N ms` | Age of the newest joint state. A few ms is healthy; `---- ms` means nothing is arriving. |
 | **Web control** switch | Off = monitor mode (read-only). On = the sliders publish commands. |
+
+**Only one cockpit tab may command.** The first websocket to connect owns
+control; any other tab is monitor-only and says so in its banner ("another
+cockpit tab has control"). They share one backend ROS node, so the
+two-commander check below cannot see them — hence the separate rule. Close
+the other tab to take over. Control is also released server-side when the
+last tab disconnects.
 
 A **red banner** appears when web control is on *and* another commander
 (phone `ik_node`, `jog`) is also publishing. It is a warning, not a block:

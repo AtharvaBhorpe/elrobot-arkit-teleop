@@ -49,10 +49,14 @@ FREEZE= GRIP_LOAD_THRESH= GRIP_SQUEEZE= Z_MIN= R_MAX= RVIZ=0`.
 2. **Tests never touch the default DDS domain**: integration tests pin
    `ROS_DOMAIN_ID=77`. A test once published /joint_command at the LIVE
    driver. Any new test that creates ROS nodes must set a domain.
-3. **One process per device**: serial port and each /dev/video* are
+3. **One process per device — and per PORT**: serial and each /dev/video* are
    single-owner. Don't run campick while cams holds a device; don't start a
    second driver. Orphaned children survive `kill` of a `pixi run` wrapper —
-   kill the child pid.
+   kill the child pid. The same applies to :8080: a second `pixi run web`
+   fails to bind and *dies quietly*, so anything you then send to
+   localhost:8080 reaches the FIRST server. That once flipped web control on
+   during a live session. Check `ss -tlnp | grep 8080` before starting one,
+   and kill by the pid you started, never by pattern.
 4. **Never use rviz "Add Display"** in this env (conda rviz2 heap-crashes
    creating render panels at runtime). Add displays by editing
    `config/view.rviz`. Foxglove is the crash-free GUI.
@@ -61,13 +65,26 @@ FREEZE= GRIP_LOAD_THRESH= GRIP_SQUEEZE= Z_MIN= R_MAX= RVIZ=0`.
 6. **Hand-observed joint signs are pose-dependent** (2 of 7 were recorded
    flipped). Only the slider-vs-hand direction test or a bent-pose FK check
    with a real tape measure is authoritative.
-7. **Safety thresholds come from measurement, not theory** — the sigma floor
+7. **/joint_command has several possible sources, and one is autonomous**:
+   phone ik_node, jog sliders, the cockpit's sliders, and cockpit replay
+   re-running a recorded episode. Only the last moves the arm with nobody on
+   a clutch, which is why it is gated behind an explicit arm step, is
+   mutually exclusive with slider control, and refuses to run without a
+   driver. Any NEW command source must keep a dense stream (the deadman
+   freezes after 200 ms of silence) and must stop publishing to stop the arm.
+8. **Safety thresholds come from measurement, not theory** — the sigma floor
    was re-placed twice after biting legitimate poses. Measure the operating
    distribution before moving any threshold.
 
 ## Test suites (all offline-safe, run before committing driver/IK changes)
 
+`pixi run test` chains all six; they must all pass before committing.
+
 - `pixi run python tests/test_driver_safety.py` — 10 checks, stub bus
 - `pixi run python tests/test_m2_pipeline.py` — end-to-end, fake phone
 - `pixi run python -m elrobot.control.cartesian_ik` — IK self-test incl. frozen modes
-- `pixi run python tests/test_recorder.py` — dataset round-trip
+- `pixi run python tests/test_recorder.py` — dataset round-trip, /record/cmd,
+  resume-into-existing-dataset
+- `pixi run python tests/test_web_api.py` — cockpit API, WS command gating,
+  calibration wizard guards, replay (incl. the gates on moving the real arm)
+- `pixi run python tests/test_calib_steps.py` — calibration maths, stub bus

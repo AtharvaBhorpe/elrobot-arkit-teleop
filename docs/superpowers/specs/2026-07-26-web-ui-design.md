@@ -22,10 +22,14 @@ on this repo's existing safety architecture instead of raw bus access.
 ## Architecture
 
 ```
-browser ── WS /ws (joint states 30 Hz down, slider targets up)
-        ── GET /cam/{wrist,ext}  (MJPEG multipart)
-        ── GET /  /static/*  /urdf/*          (page, JS, viz URDF + DAE meshes)
-        ── POST /api/calib/*  /api/record/*   (wizard steps, record control)
+browser ── WS /ws (state 30 Hz down, slider setpoints 25 Hz up)
+        ── GET /cam/{wrist,ext}/frame         (one JPEG, polled at 15 Hz)
+        ── GET /cam/{wrist,ext}               (MJPEG stream, external viewers)
+        ── GET /  /static/*  /urdf  /meshes/* (page, JS, viz URDF + DAE)
+        ── POST /api/calib/*                  (wizard steps)
+        ── POST /api/record                   (record start/stop/discard)
+        ── GET  /api/episodes[/{i}/...]       (replay: list, states, frames)
+        ── POST /api/replay/{arm,play,stop}   (replay ON THE ARM)
              │
    src/elrobot/web/server.py  (FastAPI + uvicorn, pixi env, :8080)
              │  embeds an rclpy node (background thread)
@@ -66,8 +70,15 @@ browser ── WS /ws (joint states 30 Hz down, slider targets up)
 - **WEB CONTROL toggle OFF (default):** monitor mode — sliders track
   `/joint_states`, grayed out. The URDF always mirrors the real arm.
 - **ON:** sliders seed from the current pose (no jump — the jog lesson),
-  then publish `/joint_command` at slider-change rate, joints by name +
-  gripper.
+  then publish `/joint_command` CONTINUOUSLY at 25 Hz, joints by name +
+  gripper. Not on slider-change: the driver's deadman freezes after 200 ms of
+  silence and `episode_recorder` drops frames whose action is >500 ms stale,
+  so an edge-triggered stream both latched the arm between nudges and
+  destroyed recordings.
+- Exactly ONE websocket may command. `control_on` is shared server state and
+  `commanders()` filters by ROS node name, so it cannot see a second cockpit
+  tab sharing this node; the first connection owns control and the rest are
+  monitor-only. Control is reset server-side when the last client leaves.
 - Another commander publishing simultaneously (e.g. phone ik_node) → warning
   banner, both streams stay live (user's explicit choice); the driver's slew
   limiter keeps last-write-wins fights slow rather than violent.
@@ -93,6 +104,25 @@ browser ── WS /ws (joint states 30 Hz down, slider targets up)
 - `episode_recorder` gains a command topic `/record/cmd`
   (start / stop / discard) and publishes status; the web panel sends
   commands and shows episode count + state. Terminal ENTER keeps working.
+- The recorder RESUMES an existing `--root` instead of always `create()`ing,
+  so a collection campaign spans sessions; and it re-checks stream freshness
+  before arming every episode, not just the first.
+- `/record/status` is treated as stale after 3 s, so a recorder killed
+  mid-episode stops reading as "still recording".
+
+## Replay (added after v1)
+
+- **Visual:** `ReplayLibrary` reads the dataset back; the 3D view follows the
+  recorded `observation.state` and the camera panels show recorded frames.
+  Never publishes to `/joint_command`.
+- **On the real arm:** `PhysicalReplay` re-publishes the recorded `action`
+  stream. Gated behind an explicit arm step, mutually exclusive with slider
+  control in both directions, refuses without a live driver, caps speed at
+  1.0, and seeks the episode's start pose by holding it and letting the
+  DRIVER's slew limiter walk the arm there. Stop ceases publishing; the
+  deadman freezes the arm.
+- A dataset being written by a live recorder has no parquet footer yet;
+  that is detected and reported as "quit the recorder", not as corruption.
 
 ## Error handling
 
@@ -105,11 +135,20 @@ browser ── WS /ws (joint states 30 Hz down, slider targets up)
 ## Testing (joins `pixi run test` + CI)
 
 - FastAPI TestClient: API surface, WS round-trip (states down, command up,
-  toggle enforcement), MJPEG endpoint smoke test.
+  toggle enforcement), camera endpoints, calibration wizard guards, replay
+  including every gate on moving the real arm.
 - Calibration step functions against the existing StubBus.
 - All ROS-touching tests pin `ROS_DOMAIN_ID=77` (hard rule 2).
+- Two limits worth knowing: TestClient runs the app on one blocking portal
+  and cannot hold two concurrent websockets, so multi-tab arbitration is
+  tested through `app.state` helpers; and no part of the cockpit has been
+  exercised against real hardware by an automated test.
 
 ## Out of scope (v1)
 
-Auth, HTTPS, training/replay panels (LeLab has them; we don't yet), React
+Auth, HTTPS, training panels (LeLab has them; we don't yet), React
 migration, mobile layout polish, multi-arm.
+
+**Added after v1** (not in the original scope): episode replay - visual
+playback of a recorded episode, and re-execution of one on the real arm
+behind arm/seek/stop gates. See docs/web-cockpit-guide.md.

@@ -4,8 +4,10 @@ Teleoperate a real 7-DoF + gripper Elrobot arm with an iPhone. ARKit pose
 (via [ZIG SIM PRO](https://1-10.github.io/zigsim/)) drives the end-effector
 through damped-least-squares servo IK; screen touches work the clutch and
 gripper. Includes contact-sensing grasping, three DoF modes, dual-camera
-recording straight into LeRobotDataset for imitation learning, and mcap
-session capture for Foxglove replay.
+recording straight into LeRobotDataset for imitation learning, mcap session
+capture for Foxglove, and a browser cockpit that drives the arm, runs the
+calibration wizard, records episodes and replays them
+([guide](docs/web-cockpit-guide.md)).
 
 ![Foxglove: the URDF tracking the real arm, alongside both camera feeds](assets/foxglove-demo.gif)
 
@@ -67,7 +69,7 @@ First time on new hardware: calibrate first — the guided procedure is the
 |---|---|
 | `m3-arm` / `m3-arm6` / `m3-arm5` | phone → real arm (7 / 6+1 / 5+1 DoF) |
 | `jog` | slider GUI → real arm (sliders seed from the real pose) |
-| `web` | browser cockpit on :8080 — sliders, live URDF, cams, calibrate, record ([guide](docs/web-cockpit-guide.md)) |
+| `web` | browser cockpit on :8080 — sliders, live URDF, cams, calibrate, record, replay ([guide](docs/web-cockpit-guide.md)) |
 | `view`, `m2` | visualization only, no hardware |
 | `cams` / `campick` / `rqt-cam` | camera nodes / identify devices / view feeds |
 | `record` / `bag` | LeRobotDataset episodes / mcap rosbag |
