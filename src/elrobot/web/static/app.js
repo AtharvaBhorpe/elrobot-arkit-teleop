@@ -99,6 +99,7 @@ function connect() {
         rows[n].out.textContent = m.joints[n].toFixed(2);
       }
     renderRecord(m.record);
+    renderPhys(m.replay);        // live arm/seek/play progress
   };
   ws.onclose = () => { setControlUi(false); setTimeout(connect, 1000); };
 }
@@ -490,3 +491,77 @@ rEl.stop.addEventListener("click", () => {
 });
 
 loadEpisodeList();
+
+// ── replay ON THE REAL ARM ─────────────────────────────────────────────
+// Deliberately more friction than the visual player: arming is a separate
+// act, running requires an armed session AND a selected episode, and STOP is
+// always live. Everything published still passes through the driver's gates;
+// stopping simply ceases publishing and the deadman freezes the arm.
+
+const pEl = {
+  arm: document.getElementById("phys-arm"),
+  play: document.getElementById("phys-play"),
+  stop: document.getElementById("phys-stop"),
+  speed: document.getElementById("phys-speed"),
+  status: document.getElementById("phys-status"),
+};
+
+async function physApi(path, body) {
+  const r = await fetch(path, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || `${path} failed (${r.status})`);
+  return data;
+}
+
+function renderPhys(s) {
+  if (!s) return;
+  pEl.arm.textContent = s.armed ? "Disarm" : "Arm";
+  pEl.arm.classList.toggle("primary", s.armed);
+  const running = s.phase === "seeking" || s.phase === "playing";
+  pEl.play.disabled = !s.armed || running || replay.episode === null;
+  pEl.stop.disabled = !running;
+  if (s.error) {
+    pEl.status.textContent = s.error;
+    pEl.status.classList.add("err");
+    return;
+  }
+  pEl.status.classList.remove("err");
+  pEl.status.textContent =
+    s.phase === "seeking"
+      ? "moving to the episode's start pose (driver-limited speed)…"
+      : s.phase === "playing"
+        ? `running episode #${s.episode} — frame ${s.frame + 1}/${s.total}`
+        : s.phase === "done"
+          ? `finished episode #${s.episode}`
+          : (s.armed ? "armed — the arm will move when you press Run"
+                     : "disarmed");
+}
+
+pEl.arm.addEventListener("click", async () => {
+  const armed = pEl.arm.textContent === "Disarm";
+  try {
+    renderPhys(await physApi("/api/replay/arm", { on: !armed }));
+  } catch (e) {
+    pEl.status.textContent = e.message;
+    pEl.status.classList.add("err");
+  }
+});
+
+pEl.play.addEventListener("click", async () => {
+  if (replay.episode === null) return;
+  try {
+    renderPhys(await physApi("/api/replay/play", {
+      episode: replay.episode, speed: Number(pEl.speed.value),
+    }));
+  } catch (e) {
+    pEl.status.textContent = e.message;
+    pEl.status.classList.add("err");
+  }
+});
+
+pEl.stop.addEventListener("click", async () => {
+  try { renderPhys(await physApi("/api/replay/stop")); } catch { /* ignore */ }
+});

@@ -166,10 +166,42 @@ arm does not move, and it is safe with or without the driver running. It
 answers "does this episode actually contain what I think it does?" — the
 dataset-QA step before training on it.
 
-Re-executing an episode's recorded actions *on the real arm* is deliberately
-not implemented. That is the same risk class as an autonomous policy rollout —
-the arm moving with nobody on the clutch — and belongs behind its own
-arm-it toggle, speed cap and stop control.
+### Replaying on the real arm
+
+> **The arm moves on its own, with nobody holding a clutch.** Stand clear,
+> keep the driver's terminal within reach, and treat this like the autonomous
+> rollout it effectively is.
+
+Under **On the real arm** in the same panel. It re-publishes the episode's
+recorded *action* stream to `/joint_command`, so every driver gate — velocity
+clamp, workspace box, singularity floor, joint limits, grasp latch — applies
+exactly as it does to the phone.
+
+1. Stop the phone/slider commander. Replay refuses to arm while **Web
+   control** is on, and `/api/control` refuses while replay is armed: two
+   automatic publishers on `/joint_command` have no arbitration between them.
+2. **Arm** — a separate deliberate act. Refuses if no driver is running,
+   since that is where every safety gate lives.
+3. Pick the episode in the dropdown above (the same one the visual player
+   uses), set **speed** (capped at 1.0 — never faster than recorded; 0.5 is
+   a sane first try).
+4. **Run on arm.** It first *seeks*: it holds the episode's opening pose and
+   lets the driver's own slew limiter walk the arm there at its configured
+   velocity, rather than jumping into the middle of a trajectory. Once every
+   joint is within 0.05 rad it streams the episode. If it cannot get there
+   within 45 s it gives up and says which joint is still off — usually
+   something blocked, or a safety gate holding.
+5. **STOP** at any moment. Publishing ceases immediately and the driver's
+   deadman freezes the arm within 200 ms — the same stop semantics as
+   releasing the phone clutch.
+
+Replay also stops itself if the driver disappears mid-run.
+
+**A caveat worth respecting:** an episode reproduces only if the world is set
+up as it was when recorded. The recorded commands are replayed open-loop —
+nothing is watching the cameras — so an object in a different place will
+simply be missed, and the arm will confidently execute the old trajectory
+anyway.
 
 ---
 

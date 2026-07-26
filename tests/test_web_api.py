@@ -503,6 +503,86 @@ def test_static_assets_are_not_cached():
     assert r.headers["cache-control"] == "no-store"
 
 
+def _physical_client(driver=True):
+    root = Path(tempfile.mkdtemp()) / "ds"
+    _tiny_dataset(root, episodes=1, frames=5)
+    b = FakeBridge()
+    b.driver_alive = lambda: driver
+    c = TestClient(create_app(b, dataset_root=str(root),
+                              repo_id="local/replay_fixture"))
+    return c, b
+
+
+def test_physical_replay_refuses_until_armed():
+    """It moves a real arm with nobody on the clutch; playing must never be
+    one click away."""
+    c, b = _physical_client()
+    assert c.post("/api/replay/play",
+                  json={"episode": 0, "speed": 0.5}).status_code == 409
+    assert b.published == []
+
+
+def test_physical_replay_needs_a_driver():
+    """Every safety gate - velocity clamp, workspace box, sigma floor, joint
+    limits, grasp latch - lives in the driver. No driver, no gates."""
+    c, _ = _physical_client(driver=False)
+    r = c.post("/api/replay/arm", json={"on": True})
+    assert r.status_code == 409 and "driver" in r.json()["detail"]
+
+
+def test_physical_replay_is_exclusive_with_slider_control():
+    """Two automatic publishers on /joint_command with no arbitration."""
+    c, b = _physical_client()
+    c.post("/api/control", json={"on": True})
+    r = c.post("/api/replay/arm", json={"on": True})
+    assert r.status_code == 409 and "Web control" in r.json()["detail"]
+
+    c.post("/api/control", json={"on": False})
+    assert c.post("/api/replay/arm", json={"on": True}).json()["armed"] is True
+    # and now the reverse direction is blocked too
+    r = c.post("/api/control", json={"on": True})
+    assert r.status_code == 409 and "disarm replay" in r.json()["detail"]
+
+
+def test_physical_replay_caps_speed():
+    c, _ = _physical_client()
+    c.post("/api/replay/arm", json={"on": True})
+    for bad in (0, -1, 1.5, 99):
+        r = c.post("/api/replay/play", json={"episode": 0, "speed": bad})
+        assert r.status_code == 400, f"speed {bad} should be rejected"
+
+
+def test_physical_replay_seeks_start_then_streams_and_stops():
+    """Playback publishes the episode's first pose until the arm has actually
+    reached it - letting the DRIVER's slew limiter walk it there - and only
+    then streams the recorded actions."""
+    c, b = _physical_client()
+    # arm parked far away: the seek phase must hold, not stream
+    b.latest_q = {n: 0.0 for n in [f"rev_motor_{i:02d}" for i in range(1, 9)]}
+    c.post("/api/replay/arm", json={"on": True})
+    c.post("/api/replay/play", json={"episode": 0, "speed": 1.0})
+
+    time.sleep(0.4)
+    assert b.published, "should be publishing the start pose while seeking"
+    assert c.get("/api/replay/status").json()["phase"] == "seeking"
+    # every command so far is the SAME first pose, not the trajectory
+    assert all(p == b.published[0] for p in b.published)
+
+    # arm "arrives": report the pose the player is asking for
+    b.latest_q = dict(b.published[-1])
+    deadline = time.monotonic() + 5.0
+    while (c.get("/api/replay/status").json()["phase"] == "seeking"
+           and time.monotonic() < deadline):
+        time.sleep(0.05)
+    assert c.get("/api/replay/status").json()["phase"] in ("playing", "done")
+
+    r = c.post("/api/replay/stop").json()
+    assert r["phase"] == "idle"
+    sent = len(b.published)
+    time.sleep(0.3)
+    assert len(b.published) == sent      # publishing really stopped
+
+
 def test_replay_survives_a_missing_dataset():
     c = TestClient(create_app(FakeBridge(),
                               dataset_root="data/definitely_not_here"))
@@ -545,6 +625,11 @@ if __name__ == "__main__":
     test_replay_never_commands_the_arm()
     test_replay_reports_a_recorder_still_writing()
     test_static_assets_are_not_cached()
+    test_physical_replay_refuses_until_armed()
+    test_physical_replay_needs_a_driver()
+    test_physical_replay_is_exclusive_with_slider_control()
+    test_physical_replay_caps_speed()
+    test_physical_replay_seeks_start_then_streams_and_stops()
     test_replay_survives_a_missing_dataset()
     test_record_relays_valid_commands_only()
     print("WEB API TESTS PASSED")

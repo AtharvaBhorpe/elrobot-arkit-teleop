@@ -19,6 +19,7 @@ import os
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import threading  # noqa: E402
+import time  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 import cv2
@@ -119,6 +120,14 @@ class ReplayLibrary:
                 return e["from"], e["to"]
         raise KeyError(f"no episode {episode}")
 
+    def actions(self, episode: int) -> list:
+        """The recorded ACTION stream - what the operator commanded, which is
+        what reproduces the demonstration. (states() returns what the arm
+        actually did, which is for looking at, not for re-commanding.)"""
+        ds = self._dataset()
+        lo, hi = self._bounds(episode)
+        return [np.asarray(ds[i]["action"]).tolist() for i in range(lo, hi)]
+
     def states(self, episode: int) -> dict:
         """Whole joint trajectory in one response: 8 floats x N frames is
         small, and it lets the browser animate the URDF smoothly without a
@@ -141,3 +150,171 @@ class ReplayLibrary:
         if not ok:
             raise RuntimeError("jpeg encode failed")
         return jpg.tobytes()
+
+
+class ReplayError(Exception):
+    def __init__(self, detail, code=409):
+        super().__init__(detail)
+        self.detail, self.code = detail, code
+
+
+# Rate the recorded actions are streamed back at; also the rate used while
+# seeking the start pose, so the driver's deadman (200 ms) stays fed.
+PUBLISH_HZ = 30.0
+# Every joint must be within this of the episode's first pose before playback
+# begins. The seek phase just publishes that first pose and lets the DRIVER's
+# own slew limiter (max_vel, 0.6 rad/s by default) walk the arm there - the
+# existing, measured safety mechanism, rather than a second motion primitive
+# invented here.
+SEEK_TOL_RAD = 0.05
+SEEK_TIMEOUT_S = 45.0
+MAX_SPEED = 1.0          # never faster than it was recorded
+
+
+class PhysicalReplay:
+    """Re-executes a recorded episode ON THE REAL ARM.
+
+    The arm moves with nobody holding a clutch, so this is gated far more
+    heavily than the visual player:
+
+      * must be ARMED explicitly, as a separate deliberate act;
+      * arming is mutually exclusive with slider control - two publishers on
+        /joint_command with no arbitration is exactly the fight the cockpit
+        already warns about;
+      * refuses to run without a live driver, since every safety gate
+        (velocity clamp, workspace box, sigma floor, joint limits, grasp
+        latch) lives there and applies to these commands unchanged;
+      * speed is capped at the recorded speed, never faster;
+      * seeks the episode's start pose first, at driver-limited velocity,
+        instead of jumping into the middle of a trajectory;
+      * stop() halts publishing immediately, and the driver's deadman then
+        freezes the arm within 200 ms - the same stop semantics as releasing
+        the phone clutch or closing the browser tab.
+    """
+
+    def __init__(self, library, publish, current_pose, driver_alive):
+        self._library = library
+        self._publish = publish            # dict[name, rad] -> /joint_command
+        self._current_pose = current_pose  # () -> dict[name, rad] from /joint_states
+        self._driver_alive = driver_alive
+        self.armed = False
+        self.phase = "idle"                # idle | seeking | playing | done
+        self.episode = None
+        self.frame = 0
+        self.total = 0
+        self.speed = 0.5
+        self.error = None
+        self._stop = threading.Event()
+        self._thread = None
+
+    # ---- control -----------------------------------------------------
+    def arm(self, on: bool, slider_control_on: bool):
+        if on:
+            if slider_control_on:
+                raise ReplayError(
+                    "turn Web control off first - slider commands and replay "
+                    "would both publish /joint_command with no arbitration")
+            if not self._driver_alive():
+                raise ReplayError("no driver running - it holds every safety "
+                                  "gate these commands rely on")
+        else:
+            self.stop()
+        self.armed = bool(on)
+        self.error = None
+        return self.status()
+
+    def play(self, episode: int, speed: float = 0.5):
+        if not self.armed:
+            raise ReplayError("arm replay first (this moves the real arm)")
+        if not self._driver_alive():
+            raise ReplayError("no driver running")
+        if self.phase in ("seeking", "playing"):
+            raise ReplayError("already running")
+        try:
+            speed = float(speed)
+        except (TypeError, ValueError) as e:
+            raise ReplayError("speed must be a number", code=400) from e
+        if not 0 < speed <= MAX_SPEED:
+            raise ReplayError(f"speed must be in (0, {MAX_SPEED}]", code=400)
+
+        actions = self._library.actions(episode)
+        if not actions:
+            raise ReplayError(f"episode {episode} has no frames", code=404)
+
+        self.episode, self.speed = int(episode), speed
+        self.total, self.frame = len(actions), 0
+        self.error = None
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._run, args=(actions,), daemon=True)
+        self._thread.start()
+        return self.status()
+
+    def stop(self):
+        """Halt publishing at once. The driver's deadman does the rest."""
+        self._stop.set()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=3)
+        self.phase = "idle"
+        return self.status()
+
+    def status(self) -> dict:
+        return {"armed": self.armed, "phase": self.phase,
+                "episode": self.episode, "frame": self.frame,
+                "total": self.total, "speed": self.speed,
+                "error": self.error}
+
+    # ---- the player thread -------------------------------------------
+    def _send(self, action):
+        self._publish({n: float(v) for n, v in zip(JOINTS, action)})
+
+    def _run(self, actions):
+        try:
+            self.phase = "seeking"
+            if not self._seek(actions[0]):
+                return                      # _seek set phase/error already
+
+            self.phase = "playing"
+            dt = 1.0 / (PUBLISH_HZ * self.speed)
+            for i, action in enumerate(actions):
+                if self._stop.is_set():
+                    self.phase = "idle"
+                    return
+                if not self._driver_alive():
+                    self.error = "driver disappeared mid-replay; stopped"
+                    self.phase = "idle"
+                    return
+                self.frame = i
+                self._send(action)
+                time.sleep(dt)
+            self.phase = "done"
+        except Exception as e:                              # noqa: BLE001
+            # A daemon thread's traceback goes nowhere useful; surface it.
+            self.error = f"{type(e).__name__}: {e}"
+            self.phase = "idle"
+        finally:
+            # Publishing has ceased either way; the deadman freezes the arm.
+            self._stop.set()
+
+    def _seek(self, first_action) -> bool:
+        """Hold the episode's first pose until the arm has actually reached
+        it. Publishing (not jumping) lets the driver's slew limiter walk it
+        there at its own configured max velocity."""
+        deadline = time.monotonic() + SEEK_TIMEOUT_S
+        while not self._stop.is_set():
+            self._send(first_action)
+            pose = self._current_pose() or {}
+            gap = max((abs(pose.get(n, 0.0) - v)
+                       for n, v in zip(JOINTS, first_action)), default=0.0)
+            if pose and gap <= SEEK_TOL_RAD:
+                return True
+            if time.monotonic() > deadline:
+                self.error = (f"gave up seeking the start pose after "
+                              f"{SEEK_TIMEOUT_S:.0f}s (worst joint still "
+                              f"{gap:.2f} rad off) - is the arm blocked, or "
+                              f"is a safety gate holding it?")
+                self.phase = "idle"
+                return False
+            time.sleep(1.0 / PUBLISH_HZ)
+        self.phase = "idle"
+        return False

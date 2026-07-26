@@ -29,7 +29,7 @@ from fastapi.staticfiles import StaticFiles
 
 from elrobot.control.cartesian_ik import ARM_JOINTS, GRIPPER_JOINT
 from elrobot.web.calib import CalibError, CalibSession
-from elrobot.web.replay import ReplayLibrary
+from elrobot.web.replay import PhysicalReplay, ReplayError, ReplayLibrary
 
 JOINTS = ARM_JOINTS + [GRIPPER_JOINT]
 STALE_S = 1.0
@@ -151,6 +151,14 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
     calib = CalibSession(bus_factory=bus_factory, port=port)
     library = ReplayLibrary(root=dataset_root, repo_id=repo_id)
     app.state.library = library
+    player = PhysicalReplay(
+        library,
+        publish=bridge.publish_command,
+        current_pose=lambda: bridge.latest_q,
+        driver_alive=lambda: (bridge.driver_alive()
+                              if hasattr(bridge, "driver_alive") else False),
+    )
+    app.state.player = player
 
     @app.get("/api/status")
     def status():
@@ -225,7 +233,14 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
 
     @app.post("/api/control")
     def control(body: dict):
-        bridge.control_on = bool(body.get("on"))
+        want = bool(body.get("on"))
+        # Mutual exclusion with physical replay: two publishers on
+        # /joint_command with no arbitration is the exact fight the cockpit
+        # already warns about, and here both would be automatic.
+        if want and player.armed:
+            raise HTTPException(
+                409, "disarm replay first - it is holding /joint_command")
+        bridge.control_on = want
         return {"control_on": bridge.control_on,
                 "seed": dict(bridge.latest_q) if bridge.control_on else {}}
 
@@ -258,6 +273,36 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
             return library.states(index)
         except KeyError as e:
             raise HTTPException(404, str(e)) from e
+
+    # ---- replay ON THE REAL ARM -----------------------------------------
+    # These DO move the robot. Everything they publish still goes through
+    # elrobot_driver and its gates; the extra locks here are about not
+    # starting an autonomous motion by accident.
+
+    @app.get("/api/replay/status")
+    def replay_status():
+        return player.status()
+
+    @app.post("/api/replay/arm")
+    def replay_arm(body: dict):
+        try:
+            return player.arm(bool(body.get("on")), bridge.control_on)
+        except ReplayError as e:
+            raise HTTPException(e.code, e.detail) from e
+
+    @app.post("/api/replay/play")
+    def replay_play(body: dict):
+        try:
+            return player.play(int(body.get("episode", -1)),
+                               float(body.get("speed", 0.5)))
+        except ReplayError as e:
+            raise HTTPException(e.code, e.detail) from e
+        except (KeyError, ValueError) as e:
+            raise HTTPException(404, str(e)) from e
+
+    @app.post("/api/replay/stop")
+    def replay_stop():
+        return player.stop()
 
     @app.get("/api/episodes/{index}/frame/{n}")
     def episode_frame(index: int, n: int, cam: str = "wrist"):
@@ -320,6 +365,7 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
                     "commanders": bridge.commanders(),
                     "driver_alive": alive,
                     "record": bridge.record_status_fresh(),
+                    "replay": player.status(),
                     # per-connection: is THIS tab the one allowed to command?
                     "is_owner": bool(clients) and clients[0] is sock,
                     "clients": len(clients),

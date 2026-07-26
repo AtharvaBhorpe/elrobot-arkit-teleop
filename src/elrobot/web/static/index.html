@@ -133,6 +133,32 @@
                step="1" disabled style="width: 100%; margin-top: 10px;">
         <div class="muted" id="replay-status" style="margin-top: 4px;
              font-size: 12px;">Pick an episode to watch it back.</div>
+
+        <hr style="border: 0; border-top: 1px solid var(--border);
+                   margin: 12px 0;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <strong style="font-size: 13px;">On the real arm</strong>
+        </div>
+        <p class="muted" style="margin: 6px 0 8px; font-size: 12px;">
+          Re-runs the recorded commands. <b>The arm moves on its own.</b>
+          Stand clear, keep a hand near the driver's terminal, and stop the
+          phone/slider commander first.</p>
+        <div style="display: flex; gap: 8px; align-items: center;
+                    flex-wrap: wrap;">
+          <button id="phys-arm" class="danger">Arm</button>
+          <button id="phys-play" disabled>Run on arm</button>
+          <button id="phys-stop" class="danger" disabled>STOP</button>
+          <label class="muted" style="font-size: 12px;">speed
+            <input id="phys-speed" type="number" min="0.1" max="1.0"
+                   step="0.1" value="0.5"
+                   style="width: 62px; margin-left: 4px; padding: 4px;
+                          border: 1px solid var(--border);
+                          border-radius: var(--radius);
+                          background: var(--background);
+                          color: var(--foreground);"></label>
+        </div>
+        <div class="muted" id="phys-status" style="margin-top: 6px;
+             font-size: 12px;">disarmed</div>
       </div>
     </div>
     </div><!-- /.deck -->
