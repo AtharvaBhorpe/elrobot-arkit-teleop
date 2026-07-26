@@ -17,13 +17,33 @@ NAMES.forEach((n) => {
   const inp = row.querySelector("input"), out = row.querySelector("output");
   inp.addEventListener("input", () => {
     out.textContent = (+inp.value).toFixed(2);
-    if (document.body.hasAttribute("data-control") && ws.readyState === 1)
-      ws.send(JSON.stringify({ type: "cmd",
-        positions: Object.fromEntries(NAMES.map((k) =>
-          [k, +rows[k].inp.value])) }));
   });
   rows[n] = { inp, out };
 });
+
+// Publish the current setpoint CONTINUOUSLY while web control is on, not
+// only when a slider changes. Both consumers need a dense stream:
+//   - elrobot_driver's deadman freezes after 200 ms of /joint_command
+//     silence, so an edge-triggered stream makes the arm latch on every
+//     pause between slider nudges;
+//   - episode_recorder drops any frame whose "action" is >500 ms stale, so
+//     an edge-triggered stream records almost nothing (measured: a test
+//     episode kept 56 frames, then skipped every frame for 5 s while
+//     "action stale" climbed 0.5 -> 4.6 s).
+// ik_node does exactly this on a timer; the cockpit now matches it.
+// Deliberately CLIENT-side: if this tab dies the messages stop instantly
+// and the driver's deadman freezes the arm, which is the stop guarantee we
+// already rely on. A server-side republisher would keep commanding for as
+// long as it took the socket to time out.
+const CMD_HZ = 25;
+setInterval(() => {
+  if (!document.body.hasAttribute("data-control")) return;
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({
+    type: "cmd",
+    positions: Object.fromEntries(NAMES.map((k) => [k, +rows[k].inp.value])),
+  }));
+}, 1000 / CMD_HZ);
 
 let ws;
 function connect() {
@@ -115,13 +135,34 @@ async function calibApi(path, body) {
   return data;
 }
 
+// State order mirrors m1a_calibrate: the EEPROM write happens FIRST (from
+// "preflight"), and only then are ranges swept - see calib.py's docstring
+// for why sweeping before the homing write would produce a wrong table.
+const CALIB_HINT = {
+  idle: "Driver must be stopped. Rest the arm low - torque goes off.",
+  preflight: "Park the arm relaxed, no joint near a hard stop, then write EEPROM.",
+  homed: "Homed. Now sweep every joint through its full range.",
+  sweeping: "Sweeping - move every joint end to end, then End sweep.",
+  gate: "Check the spans below, then sweep joints 05 and 07 individually.",
+  fullturn: "Sweeping a full-turn joint - move it to both stops, then End sweep.",
+  signs: "Check each joint's sign, then Finish.",
+  done: "Table written. Verify with a tape measure in a clearly bent pose.",
+};
+
 function renderCalib(snap) {
-  calibEl.status.textContent = snap.state;
+  if (snap.error) {
+    calibEl.status.textContent = snap.error;
+    calibEl.status.classList.add("err");
+  } else {
+    calibEl.status.classList.remove("err");
+    calibEl.status.textContent =
+      `${snap.state} - ${CALIB_HINT[snap.state] ?? ""}`;
+  }
   const en = {
     start: snap.state === "idle" || snap.state === "done",
-    sweepBegin: snap.state === "preflight" || snap.state === "eeprom_done",
+    sweepBegin: snap.state === "homed" || snap.state === "gate",
     sweepEnd: snap.state === "sweeping" || snap.state === "fullturn",
-    eepromOpen: snap.state === "gate",
+    eepromOpen: snap.state === "preflight",
     finish: snap.state === "signs",
   };
   calibEl.start.disabled = !en.start;
@@ -134,7 +175,7 @@ function renderCalib(snap) {
     .map((g) => `${g.name}  ${(g.span_pct * 100).toFixed(0)}%  ${g.ok ? "ok" : "SUSPECT"}`)
     .join("\n");
 
-  const showSigns = ["eeprom_done", "fullturn", "signs"].includes(snap.state);
+  const showSigns = snap.state === "signs";
   calibEl.signsWrap.style.display = showSigns ? "block" : "none";
   if (showSigns) {
     calibEl.signRows.innerHTML = "";

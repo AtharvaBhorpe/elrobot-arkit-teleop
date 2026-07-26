@@ -13,6 +13,7 @@ class StubBus:
         self.writes = []
         self.connected = False
         self.torque_disabled = False
+        self.set_half_turn_homings_calls = 0   # order of the EEPROM write matters
 
     def sync_read(self, item, names=None, normalize=False):
         return {n: self.pos[n] for n in (names or self.pos)}
@@ -30,4 +31,5 @@ class StubBus:
         self.torque_disabled = True
 
     def set_half_turn_homings(self):
+        self.set_half_turn_homings_calls += 1
         return {n: 0 for n in self.pos}

@@ -156,43 +156,109 @@ def test_calib_refuses_while_driver_alive():
     assert c.post("/api/calib/start").status_code == 409
 
 
-def test_calib_eeprom_needs_typed_confirmation():
+def _calib_client(positions=None):
     b = FakeBridge()
     b.driver_alive = lambda: False
     from stubs import StubBus
 
-    # all 8 motors present - the "preflight" sweep phase reads all of them
-    # at once via sync_read; a bus seeded with only one motor would crash
-    # the background sweep thread (silently, since it's a daemon thread)
-    positions = {f"rev_motor_{i:02d}": 2000 for i in range(1, 9)}
-    c = TestClient(create_app(b, bus_factory=lambda: StubBus(positions)))
+    # all 8 motors present - the sweep phase reads them together via
+    # sync_read; a partially-seeded bus is the failure case tested below
+    positions = positions or {f"rev_motor_{i:02d}": 2000 for i in range(1, 9)}
+    bus = StubBus(positions)
+    return TestClient(create_app(b, bus_factory=lambda: bus)), bus
+
+
+def test_calib_eeprom_needs_typed_confirmation():
+    c, _ = _calib_client()
     assert c.post("/api/calib/start").json()["state"] == "preflight"
-    c.post("/api/calib/sweep/begin")
-    c.post("/api/calib/sweep/end")
+    # EEPROM comes FIRST, straight from preflight - before any sweep
     r = c.post("/api/calib/eeprom", json={"confirm": "erase"})
     assert r.status_code == 400                       # exact string required
     r = c.post("/api/calib/eeprom", json={"confirm": "ERASE"})
-    assert r.status_code == 200
+    assert r.status_code == 200 and r.json()["state"] == "homed"
+
+
+def test_calib_writes_eeprom_before_sweeping():
+    """Order is load-bearing: set_half_turn_homings() redefines what
+    Present_Position returns, so ranges recorded BEFORE it are in a frame the
+    write invalidates. m1a_calibrate writes homing, THEN sweeps; an earlier
+    version of this wizard swept first and would have derived offsets from
+    stale ranges - a table that makes the real arm move wrong."""
+    c, bus = _calib_client()
+    c.post("/api/calib/start")
+    # sweeping is not reachable until the homing write has happened
+    assert c.post("/api/calib/sweep/begin").status_code == 409
+    assert bus.set_half_turn_homings_calls == 0
+    c.post("/api/calib/eeprom", json={"confirm": "ERASE"})
+    assert bus.set_half_turn_homings_calls == 1
+    assert c.post("/api/calib/sweep/begin").json()["state"] == "sweeping"
+
+
+def test_calib_surfaces_sweep_failure_instead_of_advancing():
+    """A silent motor made read_ranges raise inside a daemon thread, whose
+    exception was swallowed: ranges stayed empty, gate_ranges({}) returned an
+    empty list that rendered as blank (looking like a pass), the state still
+    advanced, and the destructive write sat right after it."""
+    positions = {f"rev_motor_{i:02d}": 2000 for i in range(1, 9)}
+    del positions["rev_motor_04"]                    # motor 4 never answers
+    c, _ = _calib_client(positions)
+    c.post("/api/calib/start")
+    c.post("/api/calib/eeprom", json={"confirm": "ERASE"})
+    c.post("/api/calib/sweep/begin")
+    time.sleep(0.3)
+    r = c.post("/api/calib/sweep/end")
+    assert r.status_code == 500                      # loud, not silent
+    state = c.get("/api/calib/state").json()
+    assert state["error"] and "rev_motor_04" in state["error"]
+    assert state["state"] != "gate"                  # did NOT advance
+
+
+def test_calib_finish_refuses_partial_table():
+    """urdf_ticks.json is hand-measured physical truth; a missing joint would
+    silently become a wrong offset."""
+    c, _ = _calib_client()
+    c.post("/api/calib/start")
+    c.post("/api/calib/eeprom", json={"confirm": "ERASE"})
+    c.post("/api/calib/sweep/begin")
+    time.sleep(0.15)
+    c.post("/api/calib/sweep/end")                   # -> gate (05/07 missing)
+    # jump straight at finish without the full-turn sweeps
+    c.post("/api/calib/sign", json={"joint": "rev_motor_01", "flip": False})
+    r = c.post("/api/calib/finish", json={"out": "/tmp/should-not-exist.json"})
+    assert r.status_code == 409
+    assert not Path("/tmp/should-not-exist.json").exists()
+
+
+def test_calib_start_reports_port_open_failure_cleanly():
+    b = FakeBridge()
+    b.driver_alive = lambda: False
+
+    def boom():
+        raise OSError("[Errno 16] Device or resource busy: '/dev/ttyACM0'")
+
+    c = TestClient(create_app(b, bus_factory=boom))
+    r = c.post("/api/calib/start")
+    assert r.status_code == 409                      # not an opaque 500
+    assert "busy" in r.json()["detail"]
 
 
 def test_calib_full_flow_writes_table():
-    b = FakeBridge()
-    b.driver_alive = lambda: False
-    from stubs import StubBus
-
-    positions = {f"rev_motor_{i:02d}": 2000 for i in range(1, 9)}
-    bus = StubBus(positions)
-    c = TestClient(create_app(b, bus_factory=lambda: bus))
+    c, bus = _calib_client()
     c.post("/api/calib/start")
+    # M1a order: park -> EEPROM homing write -> THEN sweep the ranges
+    c.post("/api/calib/eeprom", json={"confirm": "ERASE"})   # -> homed
     c.post("/api/calib/sweep/begin")
+    time.sleep(0.15)
     c.post("/api/calib/sweep/end")                    # -> gate
-    c.post("/api/calib/eeprom", json={"confirm": "ERASE"})   # -> eeprom_done
 
     # M1b phase A: sweep each full-turn joint (05 then 07)
-    c.post("/api/calib/sweep/begin")
+    r = c.post("/api/calib/sweep/begin")
+    assert r.json()["state"] == "fullturn"
+    time.sleep(0.15)
     c.post("/api/calib/sweep/end")
     r = c.post("/api/calib/sweep/begin")
     assert r.json()["state"] == "fullturn"
+    time.sleep(0.15)
     r = c.post("/api/calib/sweep/end")
     assert r.json()["state"] == "signs"                # both full-turn joints done
 
@@ -235,6 +301,10 @@ if __name__ == "__main__":
     test_static_urdf_and_meshes_served()
     test_calib_refuses_while_driver_alive()
     test_calib_eeprom_needs_typed_confirmation()
+    test_calib_writes_eeprom_before_sweeping()
+    test_calib_surfaces_sweep_failure_instead_of_advancing()
+    test_calib_finish_refuses_partial_table()
+    test_calib_start_reports_port_open_failure_cleanly()
     test_calib_full_flow_writes_table()
     test_record_relays_valid_commands_only()
     print("WEB API TESTS PASSED")

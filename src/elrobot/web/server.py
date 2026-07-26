@@ -9,6 +9,7 @@ commands a robot — do not port-forward it.
 """
 
 import asyncio
+import os
 import re
 import threading
 import time
@@ -31,6 +32,11 @@ from elrobot.web.calib import CalibError, CalibSession
 
 JOINTS = ARM_JOINTS + [GRIPPER_JOINT]
 STALE_S = 1.0
+
+# Serial port the CALIBRATION WIZARD opens (nothing else here touches serial).
+# Same PORT env knob every other task honours - this arm has already moved
+# from ttyACM0 to ttyACM1 once after a replug.
+DEFAULT_PORT = os.environ.get("PORT", "/dev/ttyACM0")
 
 ROOT = Path(__file__).resolve().parents[3]      # repo root
 STATIC = Path(__file__).resolve().parent / "static"
@@ -114,10 +120,10 @@ class WebBridge:
         return len(self.node.get_publishers_info_by_topic("/joint_states")) > 0
 
 
-def create_app(bridge, bus_factory=None) -> FastAPI:
+def create_app(bridge, bus_factory=None, port=DEFAULT_PORT) -> FastAPI:
     app = FastAPI(title="elrobot cockpit")
     app.state.bridge = bridge
-    calib = CalibSession(bus_factory=bus_factory)
+    calib = CalibSession(bus_factory=bus_factory, port=port)
 
     @app.get("/api/status")
     def status():

@@ -166,25 +166,40 @@ alive. That refusal is the single-owner rule protecting you, not a fault.
 Torque is disabled throughout: **the arm goes limp and will sag.** Rest it
 low or support it before starting.
 
-The flow:
+> **Not yet walked on real hardware.** The wizard's logic mirrors
+> `m1a_calibrate` / `m1b_reconcile` and is covered by offline tests against a
+> stub bus, but nobody has driven it through a real EEPROM write yet — that
+> is inherently a deliberate human session. Until someone has, the CLI
+> scripts remain the authoritative path, and this is the riskier one.
 
-1. **Start preflight** — opens the bus, disables torque.
-2. **Begin sweep** → move every joint through its full range by hand →
+The flow — note the **EEPROM write comes before the sweep**:
+
+1. **Start preflight** — opens the bus, disables torque. Pass `PORT=` if the
+   arm is not on `/dev/ttyACM0`: `PORT=/dev/ttyACM1 pixi run web`.
+2. **Park the arm** in a relaxed posture with no joint near a hard stop
+   (~20° clearance is plenty; do not measure). Whatever pose it is in becomes
+   tick 2047 on every motor.
+3. **Write EEPROM…** — the destructive step. Type `ERASE` exactly to enable
+   the confirm button. **This must happen before any sweep**:
+   `set_half_turn_homings()` redefines what `Present_Position` returns, so
+   ranges recorded beforehand would be in a coordinate frame this write
+   invalidates, and the derived offsets would be wrong by the homing delta.
+4. **Begin sweep** → move every joint through its full range by hand →
    **End sweep**. The gate then lists each joint's span vs. its URDF
    expectation; anything outside ±20% is flagged `SUSPECT` (usually means
-   you did not sweep far enough).
-3. **Write EEPROM…** — the destructive step. You must type `ERASE` exactly
-   before the confirm button enables.
-4. **Begin/End sweep** twice more — joints 5 and 7 are near-full-turn, so
+   you did not sweep far enough). A joint that never answers now aborts the
+   sweep loudly instead of silently recording nothing.
+5. **Begin/End sweep** twice more — joints 5 and 7 are near-full-turn, so
    they are swept individually with encoder unwrapping (a plain min/max
    would straddle the 0/4095 wrap and record garbage).
-5. **Sign check** — for each joint, move the slider, then move the real joint
+6. **Sign check** — for each joint, move the slider, then move the real joint
    the same way. If the model moved *opposite* the real arm, click that
    joint's chip to flip its sign. Signs are pose-dependent and 2 of 7 were
    recorded backwards on this arm once — this step is the real authority.
-6. **Finish** — derives the offsets, writes `calibration/urdf_ticks.json`,
+7. **Finish** — derives the offsets, writes `calibration/urdf_ticks.json`,
    and reports predicted TCP height/reach plus which joints the pose could
-   actually discriminate.
+   actually discriminate. Refuses to write a partial table if any joint's
+   range is missing.
 
 **Verify with a tape measure.** The FK report is only meaningful in a clearly
 bent pose; near neutral, a wrong sign is invisible and the check passes
