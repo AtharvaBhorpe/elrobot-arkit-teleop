@@ -70,8 +70,21 @@ def test_ws_streams_state_and_gates_commands():
         assert b.published and b.published[-1]["rev_motor_01"] == 0.5
 
 
+def test_mjpeg_placeholder_when_no_camera():
+    b = FakeBridge()
+    b.latest_jpeg = {}                     # no camera has published
+    c = TestClient(create_app(b))
+    with c.stream("GET", "/cam/wrist") as r:
+        assert r.status_code == 200
+        assert "multipart/x-mixed-replace" in r.headers["content-type"]
+        chunk = next(r.iter_bytes(1024))
+        assert b"--frame" in chunk and b"\xff\xd8" in chunk   # JPEG SOI
+    assert c.get("/cam/nope").status_code == 404
+
+
 if __name__ == "__main__":
     test_status_reports_joints_and_flags()
     test_control_toggle_and_seed()
     test_ws_streams_state_and_gates_commands()
+    test_mjpeg_placeholder_when_no_camera()
     print("WEB API TESTS PASSED")
