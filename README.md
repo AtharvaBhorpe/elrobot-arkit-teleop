@@ -51,6 +51,7 @@ pixi run test               # every offline test suite (no hardware needed)
 
 # a teleop session (arm plugged in, calibrated):
 pixi run m3-arm             # phone drives the real arm (+ rviz)
+pixi run web                # browser cockpit at http://localhost:8080
 pixi run cams               # WRIST_DEV=/dev/videoX EXT_DEV=/dev/videoY
 pixi run record             # LeRobotDataset episodes (ENTER = start/stop)
 pixi run bag                # optional: everything to mcap
@@ -66,6 +67,7 @@ First time on new hardware: calibrate first — the guided procedure is the
 |---|---|
 | `m3-arm` / `m3-arm6` / `m3-arm5` | phone → real arm (7 / 6+1 / 5+1 DoF) |
 | `jog` | slider GUI → real arm (sliders seed from the real pose) |
+| `web` | browser cockpit on :8080 — sliders, live URDF, cams, calibrate, record |
 | `view`, `m2` | visualization only, no hardware |
 | `cams` / `campick` / `rqt-cam` | camera nodes / identify devices / view feeds |
 | `record` / `bag` | LeRobotDataset episodes / mcap rosbag |

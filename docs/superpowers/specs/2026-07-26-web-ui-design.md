@@ -1,6 +1,6 @@
 # Web UI (LeLab-style cockpit) — Design
 
-**Date:** 2026-07-26 · **Branch:** `web-ui` · **Status:** approved design, pre-implementation
+**Date:** 2026-07-26 · **Branch:** `web-ui` · **Status:** implemented v1
 
 A single browser page that is the daily cockpit for the arm: joint sliders
 that drive the real robot, a live 3D URDF that mirrors `/joint_states`, both

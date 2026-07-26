@@ -20,6 +20,8 @@ phone -UDP-> arkit_receiver -/target_pose-> ik -/joint_command-> elrobot_driver 
   frozen (SO-101 modes). Self-test: `pixi run python -m elrobot.control.cartesian_ik`.
 - `src/elrobot/tools/make_viz_urdf.py` — derives the display model (DAE meshes,
   relocated jaw frames, camera). Kinematics ALWAYS from docs/urdf_Elrobot.urdf.
+- `src/elrobot/web/` — FastAPI cockpit backend; an ordinary DDS commander,
+  never touches serial (calibration wizard excepted, driver stopped).
 
 ## Tasks
 
@@ -27,6 +29,7 @@ phone -UDP-> arkit_receiver -/target_pose-> ik -/joint_command-> elrobot_driver 
 |---|---|
 | `m3-arm` / `m3-arm6` / `m3-arm5` | phone drives real arm (7 / 6+1 / 5+1 DoF) |
 | `jog` | slider GUI drives real arm (sliders seed from real pose) |
+| `web` | browser cockpit on :8080 — sliders, live URDF, cams, calibrate, record |
 | `cams`, `campick`, `rqt-cam` | camera nodes / identifier GUI / feed viewer |
 | `record`, `bag` | LeRobotDataset episodes / mcap rosbag |
 | `bridge` | Foxglove websocket :8765 (`rviz:=false` to drop rviz) |
