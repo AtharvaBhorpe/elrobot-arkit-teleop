@@ -111,6 +111,29 @@
         </div>
         <div class="muted" id="record-frames" style="margin-top: 8px;"></div>
       </div>
+
+      <div class="card" style="padding: 14px; margin-top: 10px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <strong style="font-size: 13px;">Replay</strong>
+          <span class="muted" style="font-size: 12px;">visual only — the arm
+            is not moved</span>
+        </div>
+        <select id="replay-select" style="width: 100%; margin-top: 10px;
+                padding: 7px; border: 1px solid var(--border);
+                border-radius: var(--radius); background: var(--background);
+                color: var(--foreground);">
+          <option value="">— no episodes —</option>
+        </select>
+        <div style="display: flex; gap: 8px; margin-top: 8px; align-items: center;">
+          <button id="replay-play" disabled>Play</button>
+          <button id="replay-stop" disabled>Stop</button>
+          <button id="replay-refresh">Refresh</button>
+        </div>
+        <input id="replay-scrub" type="range" min="0" max="0" value="0"
+               step="1" disabled style="width: 100%; margin-top: 10px;">
+        <div class="muted" id="replay-status" style="margin-top: 4px;
+             font-size: 12px;">Pick an episode to watch it back.</div>
+      </div>
     </div>
     </div><!-- /.deck -->
 

@@ -29,6 +29,7 @@ from fastapi.staticfiles import StaticFiles
 
 from elrobot.control.cartesian_ik import ARM_JOINTS, GRIPPER_JOINT
 from elrobot.web.calib import CalibError, CalibSession
+from elrobot.web.replay import ReplayLibrary
 
 JOINTS = ARM_JOINTS + [GRIPPER_JOINT]
 STALE_S = 1.0
@@ -40,6 +41,11 @@ RECORD_STALE_S = 3.0
 # Same PORT env knob every other task honours - this arm has already moved
 # from ttyACM0 to ttyACM1 once after a replug.
 DEFAULT_PORT = os.environ.get("PORT", "/dev/ttyACM0")
+# Same default --root episode_recorder writes to, so the replay panel finds
+# the episodes you just recorded without extra configuration.
+DEFAULT_DATASET_ROOT = os.environ.get(
+    "DATASET_ROOT", "data/episodes/elrobot_teleop")
+DEFAULT_REPO_ID = os.environ.get("REPO_ID", "local/elrobot_teleop")
 
 ROOT = Path(__file__).resolve().parents[3]      # repo root
 STATIC = Path(__file__).resolve().parent / "static"
@@ -137,10 +143,14 @@ class WebBridge:
         return len(self.node.get_publishers_info_by_topic("/joint_states")) > 0
 
 
-def create_app(bridge, bus_factory=None, port=DEFAULT_PORT) -> FastAPI:
+def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
+               dataset_root=DEFAULT_DATASET_ROOT,
+               repo_id=DEFAULT_REPO_ID) -> FastAPI:
     app = FastAPI(title="elrobot cockpit")
     app.state.bridge = bridge
     calib = CalibSession(bus_factory=bus_factory, port=port)
+    library = ReplayLibrary(root=dataset_root, repo_id=repo_id)
+    app.state.library = library
 
     @app.get("/api/status")
     def status():
@@ -226,6 +236,39 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT) -> FastAPI:
             raise HTTPException(400, "cmd must be start, stop, or discard")
         bridge.publish_record_cmd(cmd)
         return {"sent": cmd}
+
+    # ---- replay: read recorded episodes back, VISUAL ONLY ----------------
+    # Nothing here publishes to /joint_command. Re-executing an episode on
+    # the real arm is deliberately not implemented; see replay.py.
+
+    @app.get("/api/episodes")
+    def episodes(refresh: bool = False):
+        if refresh:
+            library.reload()      # pick up episodes recorded since startup
+        try:
+            return {"root": library.root, "episodes": library.episodes()}
+        except Exception as e:                                # noqa: BLE001
+            # A half-written or foreign dataset should read as "nothing to
+            # replay", not take the whole cockpit page down.
+            return {"root": library.root, "episodes": [], "error": str(e)}
+
+    @app.get("/api/episodes/{index}/states")
+    def episode_states(index: int):
+        try:
+            return library.states(index)
+        except KeyError as e:
+            raise HTTPException(404, str(e)) from e
+
+    @app.get("/api/episodes/{index}/frame/{n}")
+    def episode_frame(index: int, n: int, cam: str = "wrist"):
+        if cam not in ("wrist", "ext"):
+            raise HTTPException(404, "cam must be wrist or ext")
+        try:
+            jpeg = library.frame_jpeg(index, n, cam)
+        except KeyError as e:
+            raise HTTPException(404, str(e)) from e
+        return Response(content=jpeg, media_type="image/jpeg",
+                        headers={"Cache-Control": "no-store"})
 
     # Exactly ONE connection may command the arm. control_on lives on the
     # shared bridge, so without this two cockpit tabs would each run their

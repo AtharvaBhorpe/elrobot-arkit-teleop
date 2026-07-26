@@ -147,7 +147,29 @@ control still works exactly as before — the two are interchangeable.
 
 Frames are skipped (with a warning in the recorder's terminal) whenever any
 stream is missing or stale, so a dead camera yields a short episode rather
-than silently corrupt data.
+than silently corrupt data. If `action` (i.e. `/joint_command`) is the stale
+one, nothing is commanding the arm — start the driver and a commander.
+
+Episodes accumulate in one dataset across runs; the recorder resumes an
+existing `--root` rather than starting over.
+
+### Replaying an episode
+
+Below the record controls: pick an episode from the dropdown to watch it back.
+**Play/Pause**, a scrubber, and **Stop** (which returns to live). While
+replaying, the 3D view follows the recorded joint positions and both camera
+panels show the recorded frames instead of the live feeds — **Refresh**
+re-reads the dataset to pick up episodes recorded since the page loaded.
+
+This is **visual only**: replay never publishes to `/joint_command`, so the
+arm does not move, and it is safe with or without the driver running. It
+answers "does this episode actually contain what I think it does?" — the
+dataset-QA step before training on it.
+
+Re-executing an episode's recorded actions *on the real arm* is deliberately
+not implemented. That is the same risk class as an autonomous policy rollout —
+the arm moving with nobody on the clutch — and belongs behind its own
+arm-it toggle, speed cap and stop control.
 
 ---
 

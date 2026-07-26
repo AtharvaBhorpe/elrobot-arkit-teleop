@@ -1,5 +1,21 @@
 import { makeScene } from "/static/scene.js";
 
+// Declared up here, not next to the replay code at the bottom: the live
+// camera pollers and the WS handler both read replay.active, and
+// pollCamera() runs its first tick immediately at module load - a `const`
+// further down would still be in the temporal dead zone at that point and
+// throw ReferenceError.
+const replay = {
+  active: false,          // read by the WS handler and the camera pollers
+  states: null,           // whole trajectory, fetched once per episode
+  names: [],
+  fps: 30,
+  frame: 0,
+  timer: null,
+  episode: null,
+  urls: { wrist: null, ext: null },
+};
+
 const NAMES = ["rev_motor_01","rev_motor_02","rev_motor_03","rev_motor_04",
                "rev_motor_05","rev_motor_06","rev_motor_07","rev_motor_08"];
 const LIM = { rev_motor_08: [0.0, 2.0] };      // gripper; arm joints ±1.8 display
@@ -53,7 +69,9 @@ function connect() {
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
     if (m.type !== "state") return;
-    scene.setJoints(m.joints);
+    // While replaying, the 3D view shows the RECORDED pose, not the live
+    // arm - otherwise the live stream fights the playback every 33 ms.
+    if (!replay.active) scene.setJoints(m.joints);
 
     // Only the first-connected cockpit may command; the server drops cmd
     // messages from the rest. Without showing that, a second tab looked
@@ -321,6 +339,7 @@ function pollCamera(name) {
   const img = document.getElementById(`cam-${name}`);
   let lastUrl = null;
   async function tick() {
+    if (replay.active) return;    // panels are showing recorded frames
     try {
       const blob = await fetch(`/cam/${name}/frame`).then((r) => r.blob());
       const url = URL.createObjectURL(blob);
@@ -336,3 +355,133 @@ function pollCamera(name) {
 }
 pollCamera("wrist");
 pollCamera("ext");
+
+// ── episode replay (visual only) ───────────────────────────────────────
+// Plays a recorded episode back through the same 3D view and camera panels
+// used for live data. Nothing is ever sent to /joint_command from here - the
+// arm does not move. Re-executing an episode on hardware is a separate,
+// deliberately-not-built feature (see replay.py).
+
+const rEl = {
+  select: document.getElementById("replay-select"),
+  play: document.getElementById("replay-play"),
+  stop: document.getElementById("replay-stop"),
+  refresh: document.getElementById("replay-refresh"),
+  scrub: document.getElementById("replay-scrub"),
+  status: document.getElementById("replay-status"),
+};
+
+async function loadEpisodeList(refresh = false) {
+  const r = await fetch(`/api/episodes${refresh ? "?refresh=true" : ""}`)
+    .then((x) => x.json()).catch(() => ({ episodes: [] }));
+  const eps = r.episodes ?? [];
+  rEl.select.innerHTML = eps.length
+    ? '<option value="">— pick an episode —</option>'
+    : '<option value="">— no episodes recorded —</option>';
+  for (const e of eps) {
+    const o = document.createElement("option");
+    o.value = String(e.index);
+    o.textContent = `#${e.index} — ${e.frames} frames (${e.seconds}s)`
+      + (e.task ? ` — ${e.task}` : "");
+    rEl.select.appendChild(o);
+  }
+  rEl.status.textContent = r.error
+    ? `could not read ${r.root}: ${r.error}`
+    : (eps.length ? "Pick an episode to watch it back."
+                  : `nothing recorded yet in ${r.root}`);
+}
+
+async function showFrame(n) {
+  if (!replay.states) return;
+  const i = Math.max(0, Math.min(n, replay.states.length - 1));
+  replay.frame = i;
+  rEl.scrub.value = String(i);
+
+  // 3D view follows the RECORDED joint positions
+  const names = replay.names;
+  const pose = {};
+  names.forEach((nm, k) => { pose[nm] = replay.states[i][k]; });
+  scene.setJoints(pose);
+  for (const nm of NAMES) if (nm in pose) {
+    rows[nm].inp.value = pose[nm];
+    rows[nm].out.textContent = pose[nm].toFixed(2);
+  }
+
+  const secs = (i / replay.fps).toFixed(1);
+  const total = (replay.states.length / replay.fps).toFixed(1);
+  rEl.status.textContent =
+    `episode #${replay.episode} — frame ${i + 1}/${replay.states.length}`
+    + ` (${secs}s / ${total}s)`;
+
+  // recorded camera frames into the same panels
+  for (const cam of ["wrist", "ext"]) {
+    const img = document.getElementById(`cam-${cam}`);
+    try {
+      const blob = await fetch(
+        `/api/episodes/${replay.episode}/frame/${i}?cam=${cam}`)
+        .then((x) => x.blob());
+      const url = URL.createObjectURL(blob);
+      img.src = url;
+      if (replay.urls[cam]) URL.revokeObjectURL(replay.urls[cam]);
+      replay.urls[cam] = url;
+    } catch { /* frame unavailable; leave the last one up */ }
+  }
+}
+
+async function selectEpisode(index) {
+  stopReplay();
+  if (index === "") {
+    replay.states = null;
+    replay.active = false;
+    rEl.play.disabled = rEl.scrub.disabled = true;
+    rEl.status.textContent = "Pick an episode to watch it back.";
+    return;
+  }
+  rEl.status.textContent = "loading…";
+  const s = await fetch(`/api/episodes/${index}/states`).then((x) => x.json());
+  replay.episode = Number(index);
+  replay.states = s.states;
+  replay.names = s.names;
+  replay.fps = s.fps || 30;
+  replay.active = true;          // panels switch to recorded data
+  rEl.scrub.max = String(s.states.length - 1);
+  rEl.scrub.disabled = false;
+  rEl.play.disabled = false;
+  await showFrame(0);
+}
+
+function stopReplay() {
+  if (replay.timer) { clearInterval(replay.timer); replay.timer = null; }
+  rEl.play.textContent = "Play";
+  rEl.stop.disabled = true;
+}
+
+function playReplay() {
+  if (!replay.states) return;
+  if (replay.timer) { stopReplay(); return; }     // Play doubles as Pause
+  rEl.play.textContent = "Pause";
+  rEl.stop.disabled = false;
+  replay.timer = setInterval(() => {
+    if (replay.frame >= replay.states.length - 1) { stopReplay(); return; }
+    showFrame(replay.frame + 1);
+  }, 1000 / replay.fps);
+}
+
+rEl.select.addEventListener("change", (e) => selectEpisode(e.target.value));
+rEl.play.addEventListener("click", playReplay);
+rEl.scrub.addEventListener("input", (e) => {
+  stopReplay();
+  showFrame(Number(e.target.value));
+});
+rEl.refresh.addEventListener("click", () => loadEpisodeList(true));
+rEl.stop.addEventListener("click", () => {
+  // Leave replay entirely: panels and 3D view go back to live data.
+  stopReplay();
+  replay.active = false;
+  replay.states = null;
+  rEl.select.value = "";
+  rEl.scrub.disabled = rEl.play.disabled = true;
+  rEl.status.textContent = "Live. Pick an episode to watch it back.";
+});
+
+loadEpisodeList();

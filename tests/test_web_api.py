@@ -397,6 +397,90 @@ def test_calib_full_flow_writes_table():
         Path(scratch).unlink(missing_ok=True)
 
 
+def _tiny_dataset(root: Path, episodes=2, frames=6):
+    """Build a small dataset of our own rather than reusing whatever
+    tests/test_recorder.py happened to leave in data/test_episodes. That
+    cross-file dependency broke exactly once: an aborted run left a
+    half-written dataset, LeRobotDataset fell through to the HF hub looking
+    for the missing metadata, and the replay tests failed with a 401 for a
+    repo_id that only ever existed on disk."""
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    import numpy as np
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    feats = {
+        "observation.state": {"dtype": "float32", "shape": (8,),
+                              "names": [f"rev_motor_{i:02d}" for i in range(1, 9)]},
+        "action": {"dtype": "float32", "shape": (8,),
+                   "names": [f"rev_motor_{i:02d}" for i in range(1, 9)]},
+        "observation.images.wrist": {"dtype": "video", "shape": (48, 64, 3),
+                                     "names": ["height", "width", "channels"]},
+        "observation.images.external": {"dtype": "video", "shape": (48, 64, 3),
+                                        "names": ["height", "width", "channels"]},
+    }
+    ds = LeRobotDataset.create(repo_id="local/replay_fixture", fps=30,
+                               features=feats, root=str(root),
+                               robot_type="elrobot", video_backend="pyav")
+    for ep in range(episodes):
+        for k in range(frames):
+            ds.add_frame({
+                "observation.state": np.full(8, 0.1 * (k + 1), np.float32),
+                "action": np.full(8, 0.2, np.float32),
+                "observation.images.wrist": np.full((48, 64, 3), 50, np.uint8),
+                "observation.images.external": np.full((48, 64, 3), 200, np.uint8),
+                "task": "fixture"})
+        ds.save_episode()
+    ds.finalize()
+
+
+def test_replay_lists_and_serves_recorded_episodes():
+    """Replay reads back what episode_recorder wrote, on a dataset this test
+    builds itself."""
+    root = Path(tempfile.mkdtemp()) / "ds"
+    _tiny_dataset(root)
+    c = TestClient(create_app(FakeBridge(), dataset_root=str(root),
+                              repo_id="local/replay_fixture"))
+
+    eps = c.get("/api/episodes").json()["episodes"]
+    assert eps and eps[0]["frames"] > 0 and eps[0]["seconds"] > 0
+
+    s = c.get(f"/api/episodes/{eps[0]['index']}/states").json()
+    assert s["frames"] == eps[0]["frames"]
+    assert len(s["states"][0]) == 8 and s["fps"] > 0
+    assert s["names"][0] == "rev_motor_01"
+
+    r = c.get(f"/api/episodes/{eps[0]['index']}/frame/3?cam=wrist")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/jpeg"
+    assert r.content[:2] == b"\xff\xd8"
+
+    assert c.get("/api/episodes/999/states").status_code == 404
+    assert c.get("/api/episodes/0/frame/0?cam=nope").status_code == 404
+
+
+def test_replay_never_commands_the_arm():
+    """Visual replay must not move the robot. Physical re-execution is a
+    separate, deliberately-unbuilt feature (see replay.py)."""
+    root = Path(tempfile.mkdtemp()) / "ds"
+    _tiny_dataset(root, episodes=1, frames=4)
+    b = FakeBridge()
+    b.control_on = True                      # even with control enabled
+    c = TestClient(create_app(b, dataset_root=str(root),
+                              repo_id="local/replay_fixture"))
+    c.get("/api/episodes")
+    c.get("/api/episodes/0/states")
+    for n in range(5):
+        c.get(f"/api/episodes/0/frame/{n}?cam=wrist")
+    assert b.published == []                 # nothing reached /joint_command
+
+
+def test_replay_survives_a_missing_dataset():
+    c = TestClient(create_app(FakeBridge(),
+                              dataset_root="data/definitely_not_here"))
+    r = c.get("/api/episodes")
+    assert r.status_code == 200              # empty list, not a 500
+    assert r.json()["episodes"] == []
+
+
 def test_record_relays_valid_commands_only():
     b = FakeBridge()
     c = TestClient(create_app(b))
@@ -427,5 +511,8 @@ if __name__ == "__main__":
     test_control_resets_when_last_client_disconnects()
     test_calib_start_reports_port_open_failure_cleanly()
     test_calib_full_flow_writes_table()
+    test_replay_lists_and_serves_recorded_episodes()
+    test_replay_never_commands_the_arm()
+    test_replay_survives_a_missing_dataset()
     test_record_relays_valid_commands_only()
     print("WEB API TESTS PASSED")
