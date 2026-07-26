@@ -191,8 +191,51 @@ def test_record_cmd_topic():
     print("/record/cmd + /record/status PASSED")
 
 
+def test_second_run_resumes_existing_dataset():
+    """A second RUN of the recorder against the same --root used to die with
+    FileExistsError the moment an episode started, because _ensure_dataset
+    always called LeRobotDataset.create() (mkdir exist_ok=False). That makes a
+    multi-session collection campaign impossible - the whole point is to keep
+    adding episodes to one dataset. ROOT already holds one episode from
+    test_subprocess_auto_episode; run the recorder again over it."""
+    assert ROOT.exists(), "expected the earlier episode's dataset to be there"
+
+    rclpy.init()
+    node = rclpy.create_node("fake_streams_resume")
+    pubs = {
+        "wrist": node.create_publisher(Image, "/wrist_cam/image", 1),
+        "ext": node.create_publisher(Image, "/ext_cam/image", 1),
+        "state": node.create_publisher(JointState, "/joint_states", 1),
+        "action": node.create_publisher(JointState, "/joint_command", 1),
+    }
+    node.create_timer(1 / 30, lambda: (
+        pubs["wrist"].publish(img_msg(node, 50)),
+        pubs["ext"].publish(img_msg(node, 200)),
+        pubs["state"].publish(js_msg(node, [0.1] * 8)),
+        pubs["action"].publish(js_msg(node, [0.2] * 8))))
+    spin = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
+    spin.start()
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "elrobot.nodes.episode_recorder",
+         "--auto", "2", "--root", str(ROOT), "--task", "test"],
+        capture_output=True, text=True, timeout=180)
+    print(proc.stdout[-400:] or "", proc.stderr[-400:] or "")
+    assert "FileExistsError" not in proc.stderr, "second run must not crash"
+    assert proc.returncode == 0, "recorder exited nonzero on resume"
+
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    ds = LeRobotDataset(repo_id="local/elrobot_teleop", root=str(ROOT),
+                        video_backend="pyav")
+    assert ds.num_episodes == 2, f"expected 2 episodes, got {ds.num_episodes}"
+    print(f"resumed dataset now has {ds.num_episodes} episodes")
+    rclpy.try_shutdown()
+    print("resume-existing-dataset PASSED")
+
+
 def main():
     test_subprocess_auto_episode()
+    test_second_run_resumes_existing_dataset()
     test_record_cmd_topic()
     print("\nRECORDER TEST PASSED")
     return 0

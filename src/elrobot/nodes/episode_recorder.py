@@ -27,8 +27,10 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")  # local datasets, never the networ
 
 import argparse
 import json
+import sys
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
 import rclpy
@@ -104,11 +106,26 @@ class Recorder(Node):
             feats[f"observation.images.{key}"] = {
                 "dtype": "video", "shape": (h, w, c),
                 "names": ["height", "width", "channels"]}
-        self.dataset = LeRobotDataset.create(
-            repo_id=self.args.repo_id, fps=int(self.args.fps), features=feats,
-            root=self.args.root, robot_type="elrobot",
-            video_backend="pyav")  # torchcodec cannot bind this env's ffmpeg
-        self.get_logger().info(f"dataset created at {self.args.root}")
+
+        # RESUME an existing dataset rather than always create()ing. create()
+        # does mkdir(exist_ok=False), so the second RUN of the recorder against
+        # the same --root died with FileExistsError the moment you started an
+        # episode - fatal for a multi-session collection campaign, where the
+        # whole point is to keep adding episodes to one dataset.
+        if Path(self.args.root).exists():
+            self.dataset = LeRobotDataset.resume(
+                repo_id=self.args.repo_id, root=self.args.root,
+                video_backend="pyav")
+            self.get_logger().info(
+                f"resumed {self.args.root} "
+                f"({self.dataset.num_episodes} episode(s) already recorded)")
+        else:
+            self.dataset = LeRobotDataset.create(
+                repo_id=self.args.repo_id, fps=int(self.args.fps),
+                features=feats, root=self.args.root, robot_type="elrobot",
+                video_backend="pyav")  # torchcodec can't bind this env's ffmpeg
+            self.get_logger().info(f"dataset created at {self.args.root}")
+        self.episodes = self.dataset.num_episodes
 
     def _tick(self):
         if not self.recording:
@@ -128,20 +145,29 @@ class Recorder(Node):
         self.n_frames += 1
 
     def start(self):
+        # Wait for EVERY stream to be live and fresh before arming, on every
+        # episode - not just the first. The old loop was `while self.dataset
+        # is None`, so once a dataset existed it never sampled at all: episode
+        # 2 onward armed blind. Observed exactly that - "RECORDING" logged
+        # while /joint_command had been silent for 141 s, then every frame
+        # skipped and "nothing recorded, nothing saved".
+        deadline = time.monotonic() + 10.0
+        while True:
+            s, why = self._sample()
+            if s is not None:
+                break
+            if time.monotonic() > deadline:
+                self.get_logger().error(
+                    f"cannot start: {why}. Is the driver/teleop running "
+                    f"(action = /joint_command) and are both cameras up?")
+                return
+            time.sleep(0.1)
+
         # Dataset creation takes seconds (video encoder setup) - do it HERE,
         # in the caller's thread, never inside the 30 Hz timer callback
         # (measured: create() inside _tick froze the executor and episodes
         # recorded zero frames).
-        deadline = time.monotonic() + 10.0
-        while self.dataset is None:
-            s, why = self._sample()
-            if s is not None:
-                self._ensure_dataset(s)
-                break
-            if time.monotonic() > deadline:
-                self.get_logger().error(f"cannot start: {why}")
-                return
-            time.sleep(0.1)
+        self._ensure_dataset(s)
         self.recording = True
         self.n_frames = 0
         self.get_logger().info("RECORDING - ENTER to stop")
@@ -179,6 +205,11 @@ class Recorder(Node):
             def run():
                 try:
                     self.start()
+                except Exception as e:                   # noqa: BLE001
+                    # A raw traceback from a daemon thread is not something
+                    # the web Start button can show; log it as an error so it
+                    # lands in this terminal like every other failure.
+                    self.get_logger().error(f"start failed: {e}")
                 finally:
                     self._starting = False
             threading.Thread(target=run, daemon=True).start()
@@ -234,6 +265,19 @@ def main():
     finally:
         node.close()
         rclpy.try_shutdown()
+        # Hard exit once the dataset is finalised and rclpy is down.
+        # Interpreter finalisation here intermittently aborts with
+        # "terminate called without an active exception" (SIGABRT, core
+        # dumped) AFTER a completely successful recording - a teardown race
+        # in the native stack (SVT-AV1 encoder threads / pyarrow) as their
+        # objects are collected during shutdown. It only shows up under the
+        # load of a full test run, never in isolation, and it made the suite
+        # and CI flaky by turning a good recording into a nonzero exit.
+        # Nothing here relies on atexit; flush explicitly, then skip the
+        # teardown that races instead of trying to win the race.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
 
 
 if __name__ == "__main__":
