@@ -78,7 +78,12 @@ class CalibSession:
             self.bus.connect(handshake=True)
             self.bus.disable_torque()
         except Exception as e:
-            self.bus = None
+            # _close_bus, not `self.bus = None`: if connect() succeeded and
+            # disable_torque() then threw, the old code dropped a live,
+            # connected bus on the floor with no reference left to close it -
+            # the port stayed held, and the operator could hit Start again
+            # and open a SECOND connection to the same UART.
+            self._close_bus()
             # Most likely another process owns the port, or the arm is on a
             # different ttyACM than this session was told about.
             raise CalibError(
@@ -193,13 +198,50 @@ class CalibSession:
         gripper = {"closed_ticks": self.ranges["rev_motor_08"][0],
                    "open_ticks": self.ranges["rev_motor_08"][1]}
         arm_ranges = {n: self.ranges[n] for n in ARM_JOINTS}
-        self.table = steps.derive_table(arm_ranges, self.signs, gripper, limits)
-        steps.save_table(self.table, out)
-        current = self.bus.sync_read("Present_Position", ARM_JOINTS,
-                                     normalize=False)
-        self.fk = steps.fk_report(self.table, current)
-        self.bus.disconnect()
+        table = steps.derive_table(arm_ranges, self.signs, gripper, limits)
+
+        # EVERY fallible step happens BEFORE the file is written. save_table
+        # overwrites calibration/urdf_ticks.json - hand-measured physical
+        # truth - so a bus read that throws after the write would leave the
+        # file replaced while the UI reported a failure and re-enabled
+        # Finish, i.e. the operator believing nothing happened.
+        try:
+            current = self.bus.sync_read("Present_Position", ARM_JOINTS,
+                                         normalize=False)
+            fk = steps.fk_report(table, current)
+        except Exception as e:
+            self.error = (f"final pose read failed, table NOT written: {e}")
+            raise CalibError(self.error, code=500) from e
+
+        steps.save_table(table, out)      # last, and cannot fail after this
+        self.table, self.fk = table, fk
+        self._close_bus()
         self.state = "done"
+        return self.snapshot()
+
+    def _close_bus(self):
+        if self.bus is not None:
+            try:
+                self.bus.disconnect()
+            except Exception:                            # noqa: BLE001
+                pass          # already gone; nothing useful to do about it
+            self.bus = None
+
+    def abort(self):
+        """Release the serial port and reset. Without this the port stayed
+        open until the whole web backend was restarted, since the only
+        disconnect was on a fully successful finish() - which blocks the
+        driver's single-owner access (hard rule 3) after any mid-session
+        change of mind or error."""
+        if self._stop is not None:
+            self._stop.set()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=5)
+        self._close_bus()
+        self.state = "idle"
+        self.ranges, self.gate, self.signs = {}, [], {}
+        self.table = self.fk = None
+        self._sweep_result, self._sweep_error = {}, None
         return self.snapshot()
 
     def snapshot(self):

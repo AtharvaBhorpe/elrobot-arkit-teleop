@@ -32,6 +32,9 @@ from elrobot.web.calib import CalibError, CalibSession
 
 JOINTS = ARM_JOINTS + [GRIPPER_JOINT]
 STALE_S = 1.0
+# episode_recorder publishes /record/status at 1 Hz; 3 s means a couple of
+# missed ticks before we call it dead rather than flapping on one hiccup.
+RECORD_STALE_S = 3.0
 
 # Serial port the CALIBRATION WIZARD opens (nothing else here touches serial).
 # Same PORT env knob every other task honours - this arm has already moved
@@ -71,6 +74,7 @@ class WebBridge:
         self.control_on = False
         self.latest_jpeg: dict[str, tuple[bytes, float]] = {}
         self.record_status: dict | None = None
+        self.record_stamp = 0.0
         self.node.create_subscription(
             JointState, "/joint_states", self._on_js, 1)
         for name, topic in (("wrist", "/wrist_cam/image"),
@@ -92,10 +96,23 @@ class WebBridge:
     def _on_record(self, msg):
         import json
         self.record_status = json.loads(msg.data)
+        self.record_stamp = time.monotonic()
 
     def publish_record_cmd(self, cmd: str):
         from std_msgs.msg import String
         self._record_pub.publish(String(data=cmd))
+
+    def record_status_fresh(self):
+        """None once /record/status goes quiet. The recorder publishes at
+        1 Hz; caching the last message forever meant that killing the
+        recorder MID-EPISODE left the cockpit showing "recording - N frames"
+        indefinitely, with Stop/Discard enabled, while no capture was
+        happening. Same staleness discipline as latest_jpeg and latest_q."""
+        if self.record_status is None:
+            return None
+        if time.monotonic() - self.record_stamp > RECORD_STALE_S:
+            return None
+        return self.record_status
 
     def _on_img(self, msg, name):
         frame = np.frombuffer(msg.data, dtype=np.uint8).reshape(
@@ -163,6 +180,14 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT) -> FastAPI:
     def calib_state():
         return calib.snapshot()
 
+    @app.post("/api/calib/abort")
+    def calib_abort():
+        # Releases the serial port. Previously the only disconnect was a
+        # fully successful finish(), so any mid-session error or change of
+        # mind held the bus until the backend was restarted - which blocks
+        # the driver (hard rule 3).
+        return calib.abort()
+
     @app.post("/api/calib/eeprom")
     def calib_eeprom(body: dict):
         try:
@@ -202,9 +227,44 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT) -> FastAPI:
         bridge.publish_record_cmd(cmd)
         return {"sent": cmd}
 
+    # Exactly ONE connection may command the arm. control_on lives on the
+    # shared bridge, so without this two cockpit tabs would each run their
+    # own 25 Hz publisher against the same /joint_command with no arbitration
+    # (the two-commander banner cannot see them - commanders() filters by ROS
+    # node name and both tabs share this one node). First connection owns
+    # control; the rest are monitor-only and told so.
+    #
+    # The two rules live in named functions on app.state so they can be
+    # tested directly: TestClient drives the ASGI app through a single
+    # blocking portal and cannot hold two concurrent websocket sessions, so
+    # a two-tab scenario is untestable through the transport.
+    clients: list[WebSocket] = []
+
+    def client_joined(sock):
+        clients.append(sock)
+
+    def may_command(sock) -> bool:
+        return bool(bridge.control_on and clients and clients[0] is sock)
+
+    def client_gone(sock):
+        if sock in clients:
+            clients.remove(sock)
+        # No cockpit connected -> nobody may hold control. The client's own
+        # best-effort POST on unload races page teardown and can lose, which
+        # used to leave control_on stuck True with no publisher, so a later
+        # tab found the server already "in control".
+        if not clients:
+            bridge.control_on = False
+
+    app.state.clients = clients
+    app.state.client_joined = client_joined
+    app.state.may_command = may_command
+    app.state.client_gone = client_gone
+
     @app.websocket("/ws")
     async def ws(sock: WebSocket):
         await sock.accept()
+        client_joined(sock)
 
         async def sender():
             while True:
@@ -216,7 +276,10 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT) -> FastAPI:
                     "control_on": bridge.control_on,
                     "commanders": bridge.commanders(),
                     "driver_alive": alive,
-                    "record": getattr(bridge, "record_status", None),
+                    "record": bridge.record_status_fresh(),
+                    # per-connection: is THIS tab the one allowed to command?
+                    "is_owner": bool(clients) and clients[0] is sock,
+                    "clients": len(clients),
                 })
                 await asyncio.sleep(1 / 30)
 
@@ -224,12 +287,13 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT) -> FastAPI:
         try:
             while True:
                 msg = await sock.receive_json()
-                if msg.get("type") == "cmd" and bridge.control_on:
+                if msg.get("type") == "cmd" and may_command(sock):
                     bridge.publish_command(msg["positions"])
         except WebSocketDisconnect:
             pass
         finally:
             send_task.cancel()
+            client_gone(sock)
             # tab gone -> stop commanding; driver deadman freezes the arm
 
     def _current_jpeg(name: str) -> bytes:

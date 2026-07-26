@@ -25,6 +25,8 @@ class FakeBridge:
         self.control_on = False
         self.published = []          # (dict) commands captured
         self.record_cmds = []        # str commands captured
+        self.record_status = None
+        self.record_stamp = 0.0
 
     def commanders(self):
         return 0
@@ -34,6 +36,13 @@ class FakeBridge:
 
     def publish_record_cmd(self, cmd: str):
         self.record_cmds.append(cmd)
+
+    def record_status_fresh(self):
+        # Must mirror WebBridge: the WS sender calls this every tick, and a
+        # missing method raises inside that task, killing the state stream
+        # with no error visible to the client - the socket just goes quiet.
+        import elrobot.web.server as srv
+        return srv.WebBridge.record_status_fresh(self)
 
 
 def test_status_reports_joints_and_flags():
@@ -229,6 +238,112 @@ def test_calib_finish_refuses_partial_table():
     assert not Path("/tmp/should-not-exist.json").exists()
 
 
+def test_calib_start_disconnects_bus_if_setup_fails_partway():
+    """connect() succeeding and disable_torque() then throwing used to drop a
+    live connected bus with no reference left to close it - the port stayed
+    held and Start could open a SECOND connection to the same UART."""
+    from stubs import StubBus
+
+    b = FakeBridge()
+    b.driver_alive = lambda: False
+    bus = StubBus({f"rev_motor_{i:02d}": 2000 for i in range(1, 9)})
+    bus.disable_torque = lambda: (_ for _ in ()).throw(OSError("bus glitch"))
+    c = TestClient(create_app(b, bus_factory=lambda: bus))
+    r = c.post("/api/calib/start")
+    assert r.status_code == 409
+    assert bus.connected is False          # released, not leaked
+
+
+def test_calib_finish_does_not_write_table_when_final_read_fails():
+    """save_table used to run BEFORE the final pose read. A throw there left
+    calibration/urdf_ticks.json already overwritten while the UI reported a
+    failure and re-enabled Finish - the operator believing nothing happened."""
+    c, bus = _calib_client()
+    c.post("/api/calib/start")
+    c.post("/api/calib/eeprom", json={"confirm": "ERASE"})
+    for _ in range(3):                     # arm sweep + both full-turn joints
+        c.post("/api/calib/sweep/begin")
+        time.sleep(0.15)
+        c.post("/api/calib/sweep/end")
+    # Installed only now, after the sweeps: the very next sync_read is
+    # finish()'s final pose read, which is the one that must not be able to
+    # leave a written table behind.
+    def dead_bus(item, names=None, normalize=False):
+        raise OSError("serial timeout")
+
+    bus.sync_read = dead_bus
+    scratch = tempfile.mktemp(suffix=".json")
+    r = c.post("/api/calib/finish", json={"out": scratch})
+    assert r.status_code == 500
+    assert not Path(scratch).exists()      # table NOT written
+    assert "NOT written" in c.get("/api/calib/state").json()["error"]
+
+
+def test_calib_abort_releases_the_serial_port():
+    c, bus = _calib_client()
+    c.post("/api/calib/start")
+    assert bus.connected is True
+    r = c.post("/api/calib/abort")
+    assert r.status_code == 200 and r.json()["state"] == "idle"
+    assert bus.connected is False          # driver can have the port back
+
+
+def test_record_status_goes_stale_when_recorder_dies():
+    """Caching the last /record/status forever meant killing the recorder
+    mid-episode left the cockpit showing "recording" with Stop enabled."""
+    import elrobot.web.server as srv
+
+    b = FakeBridge()
+    b.record_status = {"recording": True, "episodes": 0, "frames": 42}
+    b.record_stamp = time.monotonic()
+    assert b.record_status_fresh() == b.record_status      # fresh
+    b.record_stamp = time.monotonic() - (srv.RECORD_STALE_S + 1)
+    assert b.record_status_fresh() is None                 # expired
+
+
+def test_only_first_ws_client_may_command():
+    """control_on is a single shared flag, so two tabs would each run their
+    own 25 Hz publisher against /joint_command with no arbitration - and the
+    two-commander banner cannot see them (it filters by ROS node name and
+    both tabs share this one node).
+
+    Driven through app.state rather than two real websockets: TestClient runs
+    the ASGI app on one blocking portal and cannot hold two concurrent
+    websocket sessions (attempting it deadlocks), so the arbitration rule is
+    exercised directly. The single-client path through the real transport is
+    covered by test_ws_streams_state_and_gates_commands."""
+    b = FakeBridge()
+    b.control_on = True
+    app = create_app(b)
+    tab_a, tab_b = object(), object()          # stand-ins for two sockets
+
+    app.state.client_joined(tab_a)
+    app.state.client_joined(tab_b)
+    assert app.state.may_command(tab_a) is True     # first in owns control
+    assert app.state.may_command(tab_b) is False    # second is monitor-only
+
+    # owner leaves -> the remaining tab is promoted, not left locked out
+    app.state.client_gone(tab_a)
+    assert app.state.may_command(tab_b) is True
+
+    # control off -> nobody commands, even the owner
+    b.control_on = False
+    assert app.state.may_command(tab_b) is False
+
+
+def test_control_resets_when_last_client_disconnects():
+    """The client's unload POST races page teardown; losing that race used to
+    leave control_on stuck True with no publisher, so a later tab found the
+    server already 'in control'."""
+    b = FakeBridge()
+    app = create_app(b)
+    tab = object()
+    app.state.client_joined(tab)
+    b.control_on = True
+    app.state.client_gone(tab)
+    assert b.control_on is False       # authoritative server-side reset
+
+
 def test_calib_start_reports_port_open_failure_cleanly():
     b = FakeBridge()
     b.driver_alive = lambda: False
@@ -304,6 +419,12 @@ if __name__ == "__main__":
     test_calib_writes_eeprom_before_sweeping()
     test_calib_surfaces_sweep_failure_instead_of_advancing()
     test_calib_finish_refuses_partial_table()
+    test_calib_start_disconnects_bus_if_setup_fails_partway()
+    test_calib_finish_does_not_write_table_when_final_read_fails()
+    test_calib_abort_releases_the_serial_port()
+    test_record_status_goes_stale_when_recorder_dies()
+    test_only_first_ws_client_may_command()
+    test_control_resets_when_last_client_disconnects()
     test_calib_start_reports_port_open_failure_cleanly()
     test_calib_full_flow_writes_table()
     test_record_relays_valid_commands_only()

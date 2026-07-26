@@ -38,6 +38,7 @@ NAMES.forEach((n) => {
 const CMD_HZ = 25;
 setInterval(() => {
   if (!document.body.hasAttribute("data-control")) return;
+  if (!isOwner) return;              // server drops these; don't spam them
   if (!ws || ws.readyState !== 1) return;
   ws.send(JSON.stringify({
     type: "cmd",
@@ -46,16 +47,34 @@ setInterval(() => {
 }, 1000 / CMD_HZ);
 
 let ws;
+let isOwner = true;      // server decides; assume yes until told otherwise
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
     if (m.type !== "state") return;
     scene.setJoints(m.joints);
+
+    // Only the first-connected cockpit may command; the server drops cmd
+    // messages from the rest. Without showing that, a second tab looked
+    // fully in control while every command it sent was silently discarded.
+    isOwner = m.is_owner !== false;
+    const banner = document.getElementById("banner");
+    if (!isOwner) {
+      banner.textContent = `Monitor only — another cockpit tab has control `
+        + `(${m.clients} connected). Close the other tab to take over.`;
+      banner.classList.add("show");
+      if (document.body.hasAttribute("data-control")) setControlUi(false);
+    } else if (m.control_on && m.commanders > 0) {
+      banner.textContent = "Another commander is also live (phone/jog) — web "
+        + "control is NOT disabled, both command streams are being sent";
+      banner.classList.add("show");
+    } else {
+      banner.classList.remove("show");
+    }
+
     setPill("driver", m.driver_alive, m.driver_alive ? "driver live" : "driver down");
     setPill("age", m.age_s < 0.5, `state ${m.age_s < 9 ? (m.age_s*1000)|0 : "----"} ms`);
-    document.getElementById("banner").classList.toggle("show",
-      m.control_on && m.commanders > 0);
     if (!document.body.hasAttribute("data-control"))    // monitor: track
       for (const n of NAMES) if (n in m.joints) {
         rows[n].inp.value = m.joints[n];
@@ -63,17 +82,24 @@ function connect() {
       }
     renderRecord(m.record);
   };
-  ws.onclose = () => { setControl(false); setTimeout(connect, 1000); };
+  ws.onclose = () => { setControlUi(false); setTimeout(connect, 1000); };
 }
 connect();
 
+// Local UI state only - does not touch the server. Used when the server
+// tells us we are not the owner, and on socket close.
+function setControlUi(on) {
+  document.body.toggleAttribute("data-control", on);
+  master.toggleAttribute("data-on", on);
+  master.setAttribute("aria-checked", String(on));
+}
+
 async function setControl(on) {
+  if (on && !isOwner) return;        // server would drop our commands anyway
   const r = await fetch("/api/control", { method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ on }) }).then((x) => x.json());
-  document.body.toggleAttribute("data-control", r.control_on);
-  master.toggleAttribute("data-on", r.control_on);
-  master.setAttribute("aria-checked", r.control_on);
+  setControlUi(r.control_on);
   for (const [n, v] of Object.entries(r.seed ?? {}))    // no-jump seeding
     if (rows[n]) { rows[n].inp.value = v; rows[n].out.textContent = v.toFixed(2); }
 }
@@ -219,6 +245,8 @@ calibEl.sweepBegin.addEventListener("click",
 calibEl.sweepEnd.addEventListener("click",
   () => calibAction("/api/calib/sweep/end"));
 calibEl.finish.addEventListener("click", () => calibAction("/api/calib/finish"));
+document.getElementById("calib-abort").addEventListener("click",
+  () => calibAction("/api/calib/abort"));   // always available: frees the port
 
 calibEl.eepromOpen.addEventListener("click", () => {
   calibEl.eepromInput.value = "";
