@@ -17,7 +17,7 @@ on this repo's existing safety architecture instead of raw bus access.
 | Arbitration | Explicit **WEB CONTROL** takeover switch; coexistence with phone teleop allowed, warned |
 | Recording | In v1, via a command topic to the existing recorder |
 | Frontend stack | No Node toolchain. Vanilla ES modules + vendored libraries |
-| Look | Clean/minimal/modern dark theme; Shoelace web components + custom design tokens |
+| Look | rust-ui.com (shadcn/ui) neutral scheme: light + dark, oklch grayscale tokens, hairline borders, rounded-xl cards; native elements + custom CSS |
 
 ## Architecture
 
@@ -49,15 +49,17 @@ browser ── WS /ws (joint states 30 Hz down, slider targets up)
 ## Frontend
 
 - `src/elrobot/web/static/` — `index.html`, ES modules, vendored libs
-  (three.js, urdf-loader, Shoelace). **No CDN at runtime, no build step, no
+  (three.js, urdf-loader). **No CDN at runtime, no build step, no
   node_modules.** Vendored files are committed.
 - Layout: 3D URDF viewer center-left (orbit controls, existing
   `docs/urdf_Elrobot_viz.urdf` + `data/viz_meshes/*.dae`); joints panel right
   (8 sliders + numeric readouts); tab strip: **Cameras / Calibrate / Record**;
   persistent status bar (driver alive, arbitration state, WS latency, torque
   state).
-- Dark minimal theme via CSS design tokens; Shoelace supplies sliders,
-  dialogs, tabs, toasts.
+- rust-ui/shadcn neutral theme (light default + dark variant) via the oklch
+  design tokens captured in the approved hero mockup; native elements +
+  custom CSS supply all controls — no component library, only three.js +
+  urdf-loader are vendored.
 
 ## Control & arbitration
 
