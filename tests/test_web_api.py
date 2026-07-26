@@ -165,6 +165,11 @@ def test_calib_refuses_while_driver_alive():
     assert c.post("/api/calib/start").status_code == 409
 
 
+# Backups must never land in the real calibration/ tree (hard rule 1); one
+# module-scoped temp dir keeps every calib test out of it.
+_BACKUPS = tempfile.mkdtemp(prefix="elrobot-calib-backups-")
+
+
 def _calib_client(positions=None):
     b = FakeBridge()
     b.driver_alive = lambda: False
@@ -174,7 +179,8 @@ def _calib_client(positions=None):
     # sync_read; a partially-seeded bus is the failure case tested below
     positions = positions or {f"rev_motor_{i:02d}": 2000 for i in range(1, 9)}
     bus = StubBus(positions)
-    return TestClient(create_app(b, bus_factory=lambda: bus)), bus
+    return TestClient(create_app(b, bus_factory=lambda: bus,
+                                 backup_root=_BACKUPS)), bus
 
 
 def test_calib_eeprom_needs_typed_confirmation():
@@ -248,7 +254,8 @@ def test_calib_start_disconnects_bus_if_setup_fails_partway():
     b.driver_alive = lambda: False
     bus = StubBus({f"rev_motor_{i:02d}": 2000 for i in range(1, 9)})
     bus.disable_torque = lambda: (_ for _ in ()).throw(OSError("bus glitch"))
-    c = TestClient(create_app(b, bus_factory=lambda: bus))
+    c = TestClient(create_app(b, bus_factory=lambda: bus,
+                             backup_root=_BACKUPS))
     r = c.post("/api/calib/start")
     assert r.status_code == 409
     assert bus.connected is False          # released, not leaked
@@ -351,7 +358,8 @@ def test_calib_start_reports_port_open_failure_cleanly():
     def boom():
         raise OSError("[Errno 16] Device or resource busy: '/dev/ttyACM0'")
 
-    c = TestClient(create_app(b, bus_factory=boom))
+    c = TestClient(create_app(b, bus_factory=boom,
+                              backup_root=_BACKUPS))
     r = c.post("/api/calib/start")
     assert r.status_code == 409                      # not an opaque 500
     assert "busy" in r.json()["detail"]

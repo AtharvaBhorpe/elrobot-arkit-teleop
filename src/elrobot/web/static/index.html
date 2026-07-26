@@ -64,7 +64,9 @@
 
     <div class="panel" id="panel-calibrate">
       <div class="card" style="padding: 14px;">
-        <p id="calib-status" class="muted" style="margin: 0 0 12px;">idle</p>
+        <p id="calib-status" class="muted" style="margin: 0 0 6px;">idle</p>
+        <p id="calib-backup" class="muted" style="margin: 0 0 12px; font-size: 12px;
+           display: none;"></p>
         <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;">
           <button id="calib-start">Start preflight</button>
           <button id="calib-sweep-begin" disabled>Begin sweep</button>
@@ -88,6 +90,8 @@
         <p class="muted" style="margin: 0 0 12px; font-size: 13px;">
           This writes to the servos and invalidates the current table. There is
           no partial redo - type ERASE to confirm.</p>
+        <p id="calib-eeprom-backup" class="muted" style="margin: 0 0 12px;
+           font-size: 12px;"></p>
         <input id="calib-eeprom-input" type="text" placeholder="ERASE"
                style="width: 100%; padding: 8px; border: 1px solid var(--border);
                       border-radius: var(--radius); margin-bottom: 12px;

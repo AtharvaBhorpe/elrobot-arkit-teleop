@@ -27,7 +27,7 @@ bridge.driver_alive() BEFORE start() opens the port).
 
 import threading
 
-from elrobot.calibration import steps
+from elrobot.calibration import backup, steps
 from elrobot.calibration.m1a_calibrate import FULL_TURN_MOTORS, URDF_RANGE_RAD
 
 ARM_JOINTS = [f"rev_motor_{i:02d}" for i in range(1, 8)]
@@ -42,9 +42,11 @@ class CalibError(Exception):
 
 
 class CalibSession:
-    def __init__(self, bus_factory=None, port="/dev/ttyACM0"):
+    def __init__(self, bus_factory=None, port="/dev/ttyACM0",
+                 backup_root=backup.DEFAULT_ROOT):
         self._bus_factory = bus_factory or (lambda: steps.build_bus(port))
         self.port = port
+        self.backup_root = backup_root
         self.state = "idle"
         self.bus = None
         self.ranges = {}      # name -> (min, max) raw ticks
@@ -52,6 +54,7 @@ class CalibSession:
         self.signs = {}       # name -> +1/-1, default +1 once touched
         self.table = None
         self.fk = None
+        self.backup = None    # path of the pre-calibration snapshot
         self.error = None     # last sweep-thread failure, surfaced to the UI
         self._stop = None
         self._thread = None
@@ -89,6 +92,22 @@ class CalibSession:
             raise CalibError(
                 f"cannot open {self.port}: {e}. Is another process using it?",
                 code=409) from e
+        # Snapshot BEFORE anything can write: this is the only moment the
+        # pre-calibration EEPROM still exists. A backup the operator has to
+        # remember to take is a backup that is not there on the day it is
+        # needed, so it is taken automatically and the wizard REFUSES to
+        # continue without one - no backup, no destructive write. (To
+        # calibrate anyway, the CLI scripts remain the unguarded path.)
+        try:
+            self.backup = str(backup.snapshot(
+                self.bus, self.port, note="web wizard preflight",
+                root=self.backup_root))
+        except Exception as e:
+            self._close_bus()
+            raise CalibError(
+                f"could not back up the current calibration ({e}) - refusing "
+                f"to start, since the EEPROM write cannot be undone", code=500
+            ) from e
         self.error = None
         self.state = "preflight"
         return self.snapshot()
@@ -253,4 +272,5 @@ class CalibSession:
             "table": self.table,
             "fk": self.fk,
             "error": self.error,
+            "backup": self.backup,
         }

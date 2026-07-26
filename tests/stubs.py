@@ -1,19 +1,38 @@
 """Shared test doubles for the offline suites - no hardware, ever."""
 
+from dataclasses import dataclass
+
+HALF_TURN = 2047        # what set_half_turn_homings() makes the current pose
+MAX_TICKS = 4095
+
+
+@dataclass
+class _Calib:
+    """Mirrors lerobot's MotorCalibration field-for-field, without importing
+    it - backup.capture() only needs vars() to work."""
+    id: int
+    drive_mode: int
+    homing_offset: int
+    range_min: int
+    range_max: int
+
 
 class StubBus:
     """Stands in for a real lerobot FeetechMotorsBus: dict-backed
     sync_read/sync_write, plus the no-op lifecycle methods
-    (connect/disable_torque/set_half_turn_homings/disconnect) the web
-    wizard's session (elrobot.web.calib.CalibSession) calls through
-    start()/eeprom()/finish()."""
+    (connect/disable_torque/set_half_turn_homings/disconnect) and the
+    read_calibration/write_calibration pair that elrobot.calibration.backup
+    snapshots and restores."""
 
     def __init__(self, positions):
         self.pos = dict(positions)          # name -> ticks
         self.writes = []
         self.connected = False
         self.torque_disabled = False
-        self.set_half_turn_homings_calls = 0   # order of the EEPROM write matters
+        self.set_half_turn_homings_calls = 0   # EEPROM write order matters
+        self.calib = {n: {"id": i + 1, "drive_mode": 0, "homing_offset": 0,
+                          "range_min": 0, "range_max": MAX_TICKS}
+                      for i, n in enumerate(self.pos)}
 
     def sync_read(self, item, names=None, normalize=False):
         return {n: self.pos[n] for n in (names or self.pos)}
@@ -32,4 +51,16 @@ class StubBus:
 
     def set_half_turn_homings(self):
         self.set_half_turn_homings_calls += 1
-        return {n: 0 for n in self.pos}
+        # Mutate the stub's EEPROM the way the real call does, so a test can
+        # prove a restore actually puts the OLD offsets back rather than just
+        # round-tripping a dict that nothing ever changed.
+        for n, c in self.calib.items():
+            c["homing_offset"] = self.pos[n] - HALF_TURN
+        return {n: c["homing_offset"] for n, c in self.calib.items()}
+
+    # --- the three destructible EEPROM registers (elrobot.calibration.backup)
+    def read_calibration(self):
+        return {n: _Calib(**c) for n, c in self.calib.items()}
+
+    def write_calibration(self, calibration_dict, cache=True):
+        self.calib = {n: dict(vars(c)) for n, c in calibration_dict.items()}

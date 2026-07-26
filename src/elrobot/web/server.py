@@ -27,6 +27,7 @@ from fastapi import (
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from elrobot.calibration import backup
 from elrobot.control.cartesian_ik import ARM_JOINTS, GRIPPER_JOINT
 from elrobot.web.calib import CalibError, CalibSession
 from elrobot.web.replay import PhysicalReplay, ReplayError, ReplayLibrary
@@ -145,10 +146,12 @@ class WebBridge:
 
 def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
                dataset_root=DEFAULT_DATASET_ROOT,
-               repo_id=DEFAULT_REPO_ID) -> FastAPI:
+               repo_id=DEFAULT_REPO_ID,
+               backup_root=backup.DEFAULT_ROOT) -> FastAPI:
     app = FastAPI(title="elrobot cockpit")
     app.state.bridge = bridge
-    calib = CalibSession(bus_factory=bus_factory, port=port)
+    calib = CalibSession(bus_factory=bus_factory, port=port,
+                         backup_root=backup_root)
     library = ReplayLibrary(root=dataset_root, repo_id=repo_id)
     app.state.library = library
     player = PhysicalReplay(

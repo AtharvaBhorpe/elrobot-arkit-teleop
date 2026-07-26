@@ -35,6 +35,7 @@ phone -UDP-> arkit_receiver -/target_pose-> ik -/joint_command-> elrobot_driver 
 | `bridge` | Foxglove websocket :8765 (`rviz:=false` to drop rviz) |
 | `view`, `m2` | viz-only modes, no hardware |
 | `ticks` | live joint monitor; RELEASES TORQUE (arm goes limp) |
+| `calib-backup` / `calib-restore` | snapshot / put back servo EEPROM + calibration json (driver stopped) |
 | `prove-env`, `test`, `lint` | env import gate / all offline suites / ruff |
 
 Env knobs (prefix any launch): `PORT= SCALE= ORIENT=0 SMOOTH= MAX_VEL=
@@ -45,7 +46,13 @@ FREEZE= GRIP_LOAD_THRESH= GRIP_SQUEEZE= Z_MIN= R_MAX= RVIZ=0`.
 1. **Calibration artifacts are sacred**: `calibration/*.json` and
    `docs/urdf_Elrobot.urdf` encode hand-measured physical truth. Never edit
    without an explicit human decision. Re-running M1a rewrites servo EEPROM
-   and invalidates the M1b table.
+   and invalidates the M1b table. The json is git-tracked and therefore
+   recoverable; **the EEPROM is not** — `Homing_Offset` + `Min/Max_Position_
+   Limit` per motor exist nowhere else once overwritten. `pixi run
+   calib-backup` snapshots both halves into one file (they must be restored
+   together or the table describes servos it no longer matches);
+   `pixi run calib-restore` puts them back. The web wizard takes this
+   snapshot automatically at preflight and refuses to start without one.
 2. **Tests never touch the default DDS domain**: integration tests pin
    `ROS_DOMAIN_ID=77`. A test once published /joint_command at the LIVE
    driver. Any new test that creates ROS nodes must set a domain.

@@ -68,6 +68,10 @@ m3-arm5 = "python -m elrobot.tools.make_viz_urdf && FREEZE=rev_motor_03,rev_moto
 jog = "python -m elrobot.tools.make_viz_urdf && ros2 launch launch/jog.launch.py"
 # live tick/angle/load monitor; also RELEASES TORQUE (arm goes limp — support it)
 ticks = "python -m elrobot.tools.watch_ticks"
+# snapshot / put back the servo EEPROM a recalibration overwrites (+ the
+# calibration json that must stay coherent with it). Driver must be stopped.
+calib-backup = "python -m elrobot.calibration.backup"
+calib-restore = "python -m elrobot.calibration.backup --restore"
 
 # ── visualization only — no hardware ───────────────────────────────────
 

@@ -5,6 +5,7 @@ import os
 os.environ.setdefault("ROS_DOMAIN_ID", "77")  # NEVER touch a live session
 
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -13,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # for `stubs` below
 
 from stubs import StubBus  # noqa: E402 - shared with tests/test_web_api.py
 
+from elrobot.calibration import backup
 from elrobot.calibration.steps import derive_table, gate_ranges, read_ranges
 
 
@@ -68,9 +70,82 @@ def test_derive_table_asymmetric_urdf_range():
     assert expected_offset != 2000.0   # would silently be wrong if ignored
 
 
+def test_backup_round_trips_the_eeprom_the_wizard_destroys():
+    """The whole point: after set_half_turn_homings() has overwritten every
+    homing offset, restoring the snapshot must put the ORIGINAL values back.
+    A backup that only round-trips an unchanged dict proves nothing."""
+    bus = StubBus({f"rev_motor_{i:02d}": 1500 + 100 * i for i in range(1, 9)})
+    for i, n in enumerate(bus.calib):          # give it a distinctive prior
+        bus.calib[n]["homing_offset"] = 300 + i
+        bus.calib[n]["range_min"] = 10 + i
+    before = {n: dict(c) for n, c in bus.calib.items()}
+
+    with tempfile.TemporaryDirectory() as d:
+        snap_path = backup.snapshot(bus, "/dev/null", root=d)
+
+        bus.set_half_turn_homings()            # the destructive write
+        assert bus.calib != before, "stub did not actually change the EEPROM"
+
+        # files=False: this test must never write the real calibration/*.json
+        backup.restore(bus, backup.load(snap_path), files=False)
+
+    assert bus.calib == before, "restore did not put the old EEPROM back"
+
+
+def test_backup_refuses_a_protocol_that_cannot_read_offsets():
+    """read_calibration() silently reports homing_offset=0 on protocol 1.
+    A backup full of zeros looks fine and is worthless, so capture() must
+    refuse rather than write one."""
+    bus = StubBus({"rev_motor_01": 2047})
+    bus.protocol_version = 1
+    try:
+        backup.capture(bus)
+    except RuntimeError as e:
+        assert "protocol_version" in str(e)
+    else:
+        raise AssertionError("captured a backup that would have been zeros")
+
+
+def test_backup_never_clobbers_an_existing_snapshot():
+    bus = StubBus({"rev_motor_01": 2047})
+    with tempfile.TemporaryDirectory() as d:
+        a = backup.snapshot(bus, root=d)
+        b = backup.snapshot(bus, root=d)       # same second -> same stamp
+        assert a != b and a.exists() and b.exists()
+        assert backup.latest(d) == max(a, b)
+
+
+def test_wizard_snapshots_before_it_can_write_and_refuses_without_one():
+    """Preflight must produce a backup, and must NOT enter a state from
+    which the EEPROM write is reachable if it could not."""
+    from elrobot.web.calib import CalibError, CalibSession
+    bus = StubBus({f"rev_motor_{i:02d}": 2047 for i in range(1, 9)})
+    with tempfile.TemporaryDirectory() as d:
+        s = CalibSession(bus_factory=lambda: bus, backup_root=d)
+        snap = s.start(driver_alive=False)
+        assert snap["state"] == "preflight"
+        assert snap["backup"] and Path(snap["backup"]).exists()
+        assert bus.set_half_turn_homings_calls == 0, "wrote before backing up"
+        s.abort()
+
+    # unwritable backup root -> refuse to start at all
+    s2 = CalibSession(bus_factory=lambda: bus, backup_root="/proc/nope")
+    try:
+        s2.start(driver_alive=False)
+    except CalibError as e:
+        assert s2.state == "idle" and "back up" in e.detail
+        assert s2.bus is None, "left the serial port held after refusing"
+    else:
+        raise AssertionError("started a calibration with no backup")
+
+
 if __name__ == "__main__":
     test_read_ranges_tracks_min_max()
     test_gate_flags_short_spans()
     test_derive_table_midpoint_offsets()
     test_derive_table_asymmetric_urdf_range()
+    test_backup_round_trips_the_eeprom_the_wizard_destroys()
+    test_backup_refuses_a_protocol_that_cannot_read_offsets()
+    test_backup_never_clobbers_an_existing_snapshot()
+    test_wizard_snapshots_before_it_can_write_and_refuses_without_one()
     print("CALIB STEPS TESTS PASSED")

@@ -98,6 +98,14 @@ browser ── WS /ws (state 30 Hz down, slider setpoints 25 Hz up)
   with tape-measure entry.
 - Results land in `calibration/*.json` as today. A human clicking through
   typed confirmations satisfies hard rule 1's "explicit human decision".
+- **Preflight snapshots what the run will destroy** (`calibration/backup.py`):
+  the three EEPROM registers `set_half_turn_homings()` overwrites, plus the
+  calibration json, in ONE file — they are restored together because
+  `urdf_ticks.json`'s offsets are expressed in the tick frame the homing
+  offsets define. Start refuses if the snapshot cannot be written: the EEPROM
+  write is the only step in this repo with no undo, so it does not happen
+  without one. `pixi run calib-restore` is the recovery path and needs no
+  browser.
 
 ## Recording
 

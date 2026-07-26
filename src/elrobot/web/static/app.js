@@ -194,6 +194,8 @@ const calibEl = {
   eepromInput: document.getElementById("calib-eeprom-input"),
   eepromCancel: document.getElementById("calib-eeprom-cancel"),
   eepromConfirm: document.getElementById("calib-eeprom-confirm"),
+  backup: document.getElementById("calib-backup"),
+  dialogBackup: document.getElementById("calib-eeprom-backup"),
 };
 
 async function calibApi(path, body) {
@@ -229,6 +231,16 @@ function renderCalib(snap) {
     calibEl.status.textContent =
       `${snap.state} - ${CALIB_HINT[snap.state] ?? ""}`;
   }
+  // The snapshot taken at preflight is the ONLY way back from the EEPROM
+  // write, so it is shown continuously and again inside the confirm dialog -
+  // the operator should never type ERASE without seeing where the undo lives.
+  const b = snap.backup;
+  calibEl.backup.style.display = b ? "block" : "none";
+  calibEl.backup.textContent = b ? `backup: ${b}  (restore: pixi run calib-restore)` : "";
+  calibEl.dialogBackup.textContent = b
+    ? `Recoverable: ${b} — pixi run calib-restore puts these servos back.`
+    : "No backup recorded — do not proceed.";
+
   const en = {
     start: snap.state === "idle" || snap.state === "done",
     sweepBegin: snap.state === "homed" || snap.state === "gate",

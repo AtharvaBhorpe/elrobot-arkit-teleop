@@ -220,6 +220,26 @@ anyway.
 > `calibration/*.json` is hand-measured physical truth. Treat a full
 > recalibration as a deliberate session, not something to click through.
 
+**Your current calibration is backed up automatically.** Preflight snapshots
+every servo's `Homing_Offset` and min/max position limits *plus* the current
+`calibration/*.json` into one file under `calibration/backups/`, before
+anything can write. The path is shown under the wizard status and again in
+the EEPROM confirm dialog. If a run goes wrong:
+
+```bash
+# driver stopped, as always
+pixi run calib-restore              # newest snapshot
+pixi run calib-backup --list        # see them all
+pixi run calib-restore --file calibration/backups/calib-20260726T2140.json
+```
+
+The wizard **refuses to start if it cannot write that snapshot** — no backup,
+no destructive write. Restore puts the EEPROM and the json back *together*;
+they are not independent, and restoring one alone leaves a table describing
+servos that no longer match it. You can also snapshot any time with
+`pixi run calib-backup` (driver stopped) — worth doing right now, before you
+ever open the wizard.
+
 **The driver must be stopped.** The wizard needs exclusive serial access, so
 `Start preflight` returns a `409` (shown inline in red) while the driver is
 alive. That refusal is the single-owner rule protecting you, not a fault.
