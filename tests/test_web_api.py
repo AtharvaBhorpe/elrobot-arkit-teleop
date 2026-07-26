@@ -100,9 +100,22 @@ def test_mjpeg_placeholder_when_no_camera():
     assert c.get("/cam/nope").status_code == 404
 
 
+def test_static_urdf_and_meshes_served():
+    b = FakeBridge()
+    c = TestClient(create_app(b))
+    assert c.get("/").status_code == 200
+    r = c.get("/urdf")
+    assert r.status_code == 200
+    assert 'filename="/meshes/' in r.text          # rewritten
+    assert "data/viz_meshes" not in r.text          # no filesystem paths leak
+    one = r.text.split('filename="/meshes/')[1].split('"')[0]
+    assert c.get(f"/meshes/{one}").status_code == 200
+
+
 if __name__ == "__main__":
     test_status_reports_joints_and_flags()
     test_control_toggle_and_seed()
     test_ws_streams_state_and_gates_commands()
     test_mjpeg_placeholder_when_no_camera()
+    test_static_urdf_and_meshes_served()
     print("WEB API TESTS PASSED")

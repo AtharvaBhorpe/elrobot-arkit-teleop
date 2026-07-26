@@ -9,8 +9,10 @@ commands a robot — do not port-forward it.
 """
 
 import asyncio
+import re
 import threading
 import time
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -20,12 +22,16 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from elrobot.control.cartesian_ik import ARM_JOINTS, GRIPPER_JOINT
 
 JOINTS = ARM_JOINTS + [GRIPPER_JOINT]
 STALE_S = 1.0
+
+ROOT = Path(__file__).resolve().parents[3]      # repo root
+STATIC = Path(__file__).resolve().parent / "static"
 
 
 def _placeholder(label: str) -> bytes:
@@ -165,6 +171,26 @@ def create_app(bridge) -> FastAPI:
 
         return StreamingResponse(
             gen(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+    app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+    @app.get("/", response_class=HTMLResponse)
+    def index():
+        return (STATIC / "index.html").read_text()
+
+    @app.get("/urdf", response_class=PlainTextResponse)
+    def urdf():
+        text = (ROOT / "docs" / "urdf_Elrobot_viz.urdf").read_text()
+        # 'filename="...anything.../mesh.dae"' -> 'filename="/meshes/mesh.dae"'
+        return re.sub(r'filename="[^"]*/([^/"]+\.dae)"',
+                      r'filename="/meshes/\1"', text)
+
+    @app.get("/meshes/{name}")
+    def mesh(name: str):
+        f = ROOT / "data" / "viz_meshes" / Path(name).name   # no traversal
+        if not f.exists():
+            raise HTTPException(404)
+        return FileResponse(f)
 
     return app
 

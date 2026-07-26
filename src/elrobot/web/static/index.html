@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Elrobot Cockpit</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">Elrobot Cockpit</div>
+    <div class="pills">
+      <div class="pill" id="pill-driver">
+        <div class="dot"></div>
+        <span>driver</span>
+      </div>
+      <div class="pill" id="pill-age">
+        <div class="dot"></div>
+        <span>state</span>
+      </div>
+    </div>
+    <div class="spacer"></div>
+    <div class="switch-track" id="master" role="switch" aria-checked="false" tabindex="0">
+      <div class="switch-circle"></div>
+    </div>
+  </header>
+
+  <div id="banner">Multiple commands detected — web control disabled</div>
+
+  <main>
+    <div class="card">
+      <div id="scene3d"></div>
+    </div>
+    <div class="card">
+      <h3 style="padding: 16px 16px 0 16px; margin: 0 0 12px 0; font-size: 14px;">Joints</h3>
+      <div id="joints"></div>
+    </div>
+  </main>
+
+  <nav role="tablist">
+    <button role="tab" aria-selected="true" data-tab="cameras">Cameras</button>
+    <button role="tab" data-tab="calibrate">Calibrate</button>
+    <button role="tab" data-tab="record">Record</button>
+  </nav>
+
+  <div class="deckwrap">
+    <div class="panel active" id="tab-cameras">
+      <p>Cameras panel - wired in Task 5</p>
+    </div>
+    <div class="panel" id="tab-calibrate">
+      <p>Calibrate panel - wired in Task 7</p>
+    </div>
+    <div class="panel" id="tab-record">
+      <p>Record panel - wired in Task 8</p>
+    </div>
+  </div>
+
+  <script type="importmap">
+    {"imports": {"three": "/static/vendor/three.module.min.js"}}
+  </script>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
