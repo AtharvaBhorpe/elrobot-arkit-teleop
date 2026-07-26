@@ -30,6 +30,9 @@ import pinocchio as pin
 from lerobot.motors import Motor, MotorNormMode
 from lerobot.motors.feetech import FeetechMotorsBus
 
+from elrobot.calibration.steps import derive_table
+from elrobot.calibration.steps import unwrap as _unwrap  # re-exported below
+
 MODEL = "sts3215"
 TICKS_PER_RAD = 651.9
 ENC = 4096
@@ -53,14 +56,7 @@ def read(bus, name):
     return bus.sync_read("Present_Position", [name], normalize=False)[name]
 
 
-def unwrap(prev_raw, raw, acc):
-    """Track absolute travel across the 0/4095 encoder boundary."""
-    d = raw - prev_raw
-    if d > ENC // 2:
-        d -= ENC
-    elif d < -ENC // 2:
-        d += ENC
-    return acc + d
+unwrap = _unwrap  # steps.unwrap - identical logic, extracted for the web wizard
 
 
 def joint_axes(path="docs/urdf_Elrobot.urdf"):
@@ -205,21 +201,21 @@ def main():
             direction, mag = describe(model, data, jid[n], axes)
             signs[n] = ask_sign(bus, n, direction, mag * 1000)
 
-        # Derive offsets
-        table = {}
+        # Derive offsets (steps.derive_table has the actual math; this loop
+        # is only the CLI's live table printing)
+        norm_ranges = {n: (min(ranges[n]), max(ranges[n])) for n in ARM}
+        table = derive_table(
+            norm_ranges, signs,
+            gripper={"closed_ticks": calib["rev_motor_08"]["range_min"],
+                    "open_ticks": calib["rev_motor_08"]["range_max"]},
+            limits=limits)
         print(f"\n{'JOINT':<14}{'SPAN':>6}{'EXPECT':>8}{'SIGN':>6}{'OFFSET':>10}")
         for n in ARM:
-            lo_t, hi_t = min(ranges[n]), max(ranges[n])
+            lo_t, hi_t = norm_ranges[n]
             q_lo, q_hi = limits[n]
             span, expect = hi_t - lo_t, (q_hi - q_lo) * TICKS_PER_RAD
-            offset = (lo_t + hi_t) / 2 - signs[n] * TICKS_PER_RAD * (q_lo + q_hi) / 2
-            table[n] = {"offset": round(offset, 1), "sign": signs[n]}
-            print(f"{n:<14}{span:>6}{expect:>8.0f}{signs[n]:>+6d}{offset:>10.1f}")
-
-        table["rev_motor_08"] = {  # gripper: no URDF correspondence
-            "closed_ticks": calib["rev_motor_08"]["range_min"],
-            "open_ticks": calib["rev_motor_08"]["range_max"],
-        }
+            print(f"{n:<14}{span:>6}{expect:>8.0f}{signs[n]:>+6d}"
+                  f"{table[n]['offset']:>10.1f}")
 
         # Phase C - verification gate: FK against a physical measurement
         print("\n=== verification gate ===")
