@@ -473,6 +473,36 @@ def test_replay_never_commands_the_arm():
     assert b.published == []                 # nothing reached /joint_command
 
 
+def test_replay_reports_a_recorder_still_writing():
+    """LeRobotDataset only writes the parquet footer and meta/episodes on
+    finalize(), i.e. when the recorder EXITS. Until then the newest data file
+    has no PAR1 footer and reading it raises a bare ArrowInvalid about
+    "Parquet magic bytes not found" - which reads as corruption but is just
+    an unfinished write. Observed live: the Record panel said "2 episodes"
+    while the replay dropdown said "no episodes"."""
+    root = Path(tempfile.mkdtemp()) / "ds"
+    _tiny_dataset(root, episodes=1, frames=4)
+    # simulate the in-progress state: a newer data file with no footer
+    newest = sorted((root / "data").rglob("*.parquet"))[-1]
+    (newest.parent / "file-999.parquet").write_bytes(b"PAR1\x00\x00not-done")
+
+    c = TestClient(create_app(FakeBridge(), dataset_root=str(root),
+                              repo_id="local/replay_fixture"))
+    r = c.get("/api/episodes").json()
+    assert r["episodes"] == []
+    assert "recorder is still running" in r["error"]
+    assert "Refresh" in r["error"]          # tells the operator what to do
+
+
+def test_static_assets_are_not_cached():
+    """A browser holding a cached app.js against freshly-served HTML gives a
+    page whose new controls are inert - it cost real debugging time twice."""
+    c = TestClient(create_app(FakeBridge()))
+    r = c.get("/static/app.js")
+    assert r.status_code == 200
+    assert r.headers["cache-control"] == "no-store"
+
+
 def test_replay_survives_a_missing_dataset():
     c = TestClient(create_app(FakeBridge(),
                               dataset_root="data/definitely_not_here"))
@@ -513,6 +543,8 @@ if __name__ == "__main__":
     test_calib_full_flow_writes_table()
     test_replay_lists_and_serves_recorded_episodes()
     test_replay_never_commands_the_arm()
+    test_replay_reports_a_recorder_still_writing()
+    test_static_assets_are_not_cached()
     test_replay_survives_a_missing_dataset()
     test_record_relays_valid_commands_only()
     print("WEB API TESTS PASSED")

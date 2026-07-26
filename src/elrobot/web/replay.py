@@ -69,9 +69,35 @@ class ReplayLibrary:
         with self._lock:
             self._ds = None
 
+    def writing_in_progress(self) -> bool:
+        """True while a recorder still holds this dataset open.
+
+        LeRobotDataset buffers episodes and only writes the parquet footer
+        and meta/episodes on finalize(), i.e. when the recorder EXITS. So a
+        dataset being actively recorded into has a last data file with no
+        PAR1 footer, and reading it raises a bare ArrowInvalid about
+        "Parquet magic bytes not found" - which looks like corruption but is
+        just an unfinished write. Detect it so the UI can say "quit the
+        recorder to replay" instead of "no episodes".
+        """
+        files = sorted((Path(self.root) / "data").rglob("*.parquet"))
+        if not files:
+            return False
+        try:
+            with open(files[-1], "rb") as fh:
+                fh.seek(-4, 2)
+                return fh.read(4) != b"PAR1"
+        except OSError:
+            return False
+
     def episodes(self) -> list:
         if not self.available():
             return []
+        if self.writing_in_progress():
+            raise RuntimeError(
+                "a recorder is still running - its episodes are only written "
+                "out when it exits (q + ENTER, or Ctrl-C). Quit it, then "
+                "press Refresh.")
         ds = self._dataset()
         out = []
         for row in ds.meta.episodes:

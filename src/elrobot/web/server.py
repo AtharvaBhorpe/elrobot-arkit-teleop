@@ -378,6 +378,18 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
         return StreamingResponse(
             gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 
+    # no-store on the static assets too, not just / and /urdf. A browser
+    # holding a cached app.js against freshly-served HTML silently gives you
+    # a page whose new controls are inert - which has now cost real debugging
+    # time twice. These are a few KB served over localhost; caching them buys
+    # nothing and hides edits.
+    @app.middleware("http")
+    async def _no_store_static(request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
     @app.get("/", response_class=HTMLResponse)

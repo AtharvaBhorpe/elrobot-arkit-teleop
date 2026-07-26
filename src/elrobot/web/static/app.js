@@ -385,10 +385,15 @@ async function loadEpisodeList(refresh = false) {
       + (e.task ? ` — ${e.task}` : "");
     rEl.select.appendChild(o);
   }
-  rEl.status.textContent = r.error
-    ? `could not read ${r.root}: ${r.error}`
-    : (eps.length ? "Pick an episode to watch it back."
-                  : `nothing recorded yet in ${r.root}`);
+  if (r.error) {
+    rEl.status.textContent = r.error;
+    rEl.status.classList.add("err");
+  } else {
+    rEl.status.classList.remove("err");
+    rEl.status.textContent = eps.length
+      ? "Pick an episode to watch it back."
+      : `nothing recorded yet in ${r.root}`;
+  }
 }
 
 async function showFrame(n) {
