@@ -26,6 +26,10 @@ pinocchio = "*"
 # build/dev basics
 pip = "*"
 ruff = "*"
+# web cockpit backend
+fastapi = "*"
+uvicorn = "*"
+httpx = "*"          # FastAPI TestClient transport (tests)
 # lerobot pins these tighter than conda's defaults — pin conda into the overlap
 setuptools = ">=71,<81"
 packaging = ">=24.2,<26"
@@ -67,6 +71,8 @@ ticks = "python -m elrobot.tools.watch_ticks"
 
 # ── visualization only — no hardware ───────────────────────────────────
 
+# web cockpit — browser UI on http://<host>:8080 (LAN only, do not port-forward)
+web = "python -m elrobot.web.server"
 # URDF in rviz2 with joint sliders
 view = "python -m elrobot.tools.make_viz_urdf && ros2 launch launch/view.launch.py"
 # phone (ZIG SIM PRO -> UDP :50000) drives the model in rviz2
