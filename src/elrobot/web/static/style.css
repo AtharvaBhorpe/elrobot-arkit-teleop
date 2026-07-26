@@ -129,7 +129,9 @@ header {
   transition: background-color 0.2s;
 }
 
-.switch-track[data-on="true"] {
+/* presence-based, not value-based: JS uses element.toggleAttribute("data-on", bool),
+   which sets the attribute to "" when present, not the literal string "true" */
+.switch-track[data-on] {
   background-color: var(--primary);
 }
 
@@ -141,7 +143,7 @@ header {
   transition: transform 0.2s;
 }
 
-.switch-track[data-on="true"] .switch-circle {
+.switch-track[data-on] .switch-circle {
   transform: translateX(16px);
 }
 
@@ -197,6 +199,17 @@ main {
   font-family: var(--mono);
   font-size: 12px;
   color: var(--foreground);
+}
+
+/* monitor mode (default): sliders track the real arm, inert and dimmed.
+   Web control ON sets data-control on <body> and the sliders go live. */
+body:not([data-control]) .joint input {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+body:not([data-control]) .joint output {
+  color: var(--muted-foreground);
 }
 
 nav[role="tablist"] {

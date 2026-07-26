@@ -56,7 +56,11 @@
   </div>
 
   <script type="importmap">
-    {"imports": {"three": "/static/vendor/three.module.min.js"}}
+    {"imports": {
+      "three": "/static/vendor/three.module.min.js",
+      "three/examples/jsm/loaders/STLLoader.js": "/static/vendor/three/examples/jsm/loaders/STLLoader.js",
+      "three/examples/jsm/loaders/ColladaLoader.js": "/static/vendor/three/examples/jsm/loaders/ColladaLoader.js"
+    }}
   </script>
   <script type="module" src="/static/app.js"></script>
 </body>
