@@ -74,3 +74,109 @@ document.querySelectorAll('nav[role="tablist"] [role="tab"]').forEach((btn) => {
       p.classList.toggle("active", p.id === `tab-${btn.dataset.tab}`));
   });
 });
+
+// ── calibration wizard ─────────────────────────────────────────────────
+// Driver must be stopped before this tab does anything real - /api/calib/*
+// enforces that server-side (409 while driver_alive()); this UI just
+// reflects whatever state the session is actually in.
+
+const ARM = Array.from({ length: 7 }, (_, i) =>
+  `rev_motor_${String(i + 1).padStart(2, "0")}`);
+const calibEl = {
+  status: document.getElementById("calib-status"),
+  gate: document.getElementById("calib-gate"),
+  start: document.getElementById("calib-start"),
+  sweepBegin: document.getElementById("calib-sweep-begin"),
+  sweepEnd: document.getElementById("calib-sweep-end"),
+  eepromOpen: document.getElementById("calib-eeprom-open"),
+  finish: document.getElementById("calib-finish"),
+  signsWrap: document.getElementById("calib-signs"),
+  signRows: document.getElementById("calib-sign-rows"),
+  dialog: document.getElementById("calib-eeprom-dialog"),
+  eepromInput: document.getElementById("calib-eeprom-input"),
+  eepromCancel: document.getElementById("calib-eeprom-cancel"),
+  eepromConfirm: document.getElementById("calib-eeprom-confirm"),
+};
+
+async function calibApi(path, body) {
+  const r = await fetch(path, body === undefined ? { method: "POST" } : {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || `${path} failed (${r.status})`);
+  return data;
+}
+
+function renderCalib(snap) {
+  calibEl.status.textContent = snap.state;
+  const en = {
+    start: snap.state === "idle" || snap.state === "done",
+    sweepBegin: snap.state === "preflight" || snap.state === "eeprom_done",
+    sweepEnd: snap.state === "sweeping" || snap.state === "fullturn",
+    eepromOpen: snap.state === "gate",
+    finish: snap.state === "signs",
+  };
+  calibEl.start.disabled = !en.start;
+  calibEl.sweepBegin.disabled = !en.sweepBegin;
+  calibEl.sweepEnd.disabled = !en.sweepEnd;
+  calibEl.eepromOpen.disabled = !en.eepromOpen;
+  calibEl.finish.disabled = !en.finish;
+
+  calibEl.gate.textContent = (snap.gate || [])
+    .map((g) => `${g.name}  ${(g.span_pct * 100).toFixed(0)}%  ${g.ok ? "ok" : "SUSPECT"}`)
+    .join("\n");
+
+  const showSigns = ["eeprom_done", "fullturn", "signs"].includes(snap.state);
+  calibEl.signsWrap.style.display = showSigns ? "block" : "none";
+  if (showSigns) {
+    calibEl.signRows.innerHTML = "";
+    for (const n of ARM) {
+      const sign = (snap.signs || {})[n] ?? 1;
+      const row = document.createElement("button");
+      row.className = "sign-row" + (sign < 0 ? " flipped" : "");
+      row.textContent = `${n}: ${sign > 0 ? "+" : "-"}`;
+      row.addEventListener("click", async () => {
+        await calibApi("/api/calib/sign", { joint: n, flip: true });
+        refreshCalib();
+      });
+      calibEl.signRows.appendChild(row);
+    }
+  }
+}
+
+async function refreshCalib() {
+  const r = await fetch("/api/calib/state");
+  renderCalib(await r.json());
+}
+
+calibEl.start.addEventListener("click", () =>
+  calibApi("/api/calib/start").then(renderCalib).catch(alert));
+calibEl.sweepBegin.addEventListener("click", () =>
+  calibApi("/api/calib/sweep/begin").then(renderCalib).catch(alert));
+calibEl.sweepEnd.addEventListener("click", () =>
+  calibApi("/api/calib/sweep/end").then(renderCalib).catch(alert));
+calibEl.finish.addEventListener("click", () =>
+  calibApi("/api/calib/finish").then(renderCalib).catch(alert));
+
+calibEl.eepromOpen.addEventListener("click", () => {
+  calibEl.eepromInput.value = "";
+  calibEl.eepromConfirm.disabled = true;
+  calibEl.dialog.showModal();
+});
+calibEl.eepromInput.addEventListener("input", () => {
+  calibEl.eepromConfirm.disabled = calibEl.eepromInput.value !== "ERASE";
+});
+calibEl.eepromCancel.addEventListener("click", () => calibEl.dialog.close());
+calibEl.eepromConfirm.addEventListener("click", async () => {
+  try {
+    const snap = await calibApi("/api/calib/eeprom", { confirm: calibEl.eepromInput.value });
+    renderCalib(snap);
+    calibEl.dialog.close();
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
+refreshCalib();
+setInterval(refreshCalib, 2000);

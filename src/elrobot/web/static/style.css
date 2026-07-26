@@ -292,6 +292,40 @@ canvas {
   height: 100% !important;
 }
 
+.muted {
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+dialog::backdrop {
+  background: color-mix(in srgb, var(--foreground) 30%, transparent);
+}
+
+dialog {
+  background-color: var(--card);
+  color: var(--foreground);
+}
+
+.sign-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+}
+
+.sign-row.flipped {
+  border-color: var(--warn);
+}
+
 #banner {
   display: none;
   background-color: var(--destructive);

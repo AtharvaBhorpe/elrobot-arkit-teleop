@@ -4,7 +4,12 @@ import os
 
 os.environ.setdefault("ROS_DOMAIN_ID", "77")  # NEVER touch a live session
 
+import sys
+import tempfile
 import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # for `stubs` below
 
 from fastapi.testclient import TestClient
 
@@ -112,10 +117,80 @@ def test_static_urdf_and_meshes_served():
     assert c.get(f"/meshes/{one}").status_code == 200
 
 
+def test_calib_refuses_while_driver_alive():
+    b = FakeBridge()
+    b.driver_alive = lambda: True
+    c = TestClient(create_app(b, bus_factory=lambda: None))
+    assert c.post("/api/calib/start").status_code == 409
+
+
+def test_calib_eeprom_needs_typed_confirmation():
+    b = FakeBridge()
+    b.driver_alive = lambda: False
+    from stubs import StubBus
+
+    # all 8 motors present - the "preflight" sweep phase reads all of them
+    # at once via sync_read; a bus seeded with only one motor would crash
+    # the background sweep thread (silently, since it's a daemon thread)
+    positions = {f"rev_motor_{i:02d}": 2000 for i in range(1, 9)}
+    c = TestClient(create_app(b, bus_factory=lambda: StubBus(positions)))
+    assert c.post("/api/calib/start").json()["state"] == "preflight"
+    c.post("/api/calib/sweep/begin")
+    c.post("/api/calib/sweep/end")
+    r = c.post("/api/calib/eeprom", json={"confirm": "erase"})
+    assert r.status_code == 400                       # exact string required
+    r = c.post("/api/calib/eeprom", json={"confirm": "ERASE"})
+    assert r.status_code == 200
+
+
+def test_calib_full_flow_writes_table():
+    b = FakeBridge()
+    b.driver_alive = lambda: False
+    from stubs import StubBus
+
+    positions = {f"rev_motor_{i:02d}": 2000 for i in range(1, 9)}
+    bus = StubBus(positions)
+    c = TestClient(create_app(b, bus_factory=lambda: bus))
+    c.post("/api/calib/start")
+    c.post("/api/calib/sweep/begin")
+    c.post("/api/calib/sweep/end")                    # -> gate
+    c.post("/api/calib/eeprom", json={"confirm": "ERASE"})   # -> eeprom_done
+
+    # M1b phase A: sweep each full-turn joint (05 then 07)
+    c.post("/api/calib/sweep/begin")
+    c.post("/api/calib/sweep/end")
+    r = c.post("/api/calib/sweep/begin")
+    assert r.json()["state"] == "fullturn"
+    r = c.post("/api/calib/sweep/end")
+    assert r.json()["state"] == "signs"                # both full-turn joints done
+
+    for i in range(1, 8):
+        c.post("/api/calib/sign", json={"joint": f"rev_motor_{i:02d}", "flip": False})
+
+    # NEVER the real calibration/urdf_ticks.json - see server.py's comment
+    # on the finish route. A prior version of this test wrote fake offsets
+    # into the real, hand-measured file before this override existed.
+    scratch = tempfile.mktemp(suffix=".json")
+    try:
+        r = c.post("/api/calib/finish", json={"out": scratch})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["state"] == "done"
+        assert set(body["table"]) == {f"rev_motor_{i:02d}" for i in range(1, 9)}
+        assert body["fk"]["height_m"] is not None
+        assert bus.connected is False                  # disconnected on finish
+        assert Path(scratch).exists()                  # wrote to the override, not the real file
+    finally:
+        Path(scratch).unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     test_status_reports_joints_and_flags()
     test_control_toggle_and_seed()
     test_ws_streams_state_and_gates_commands()
     test_mjpeg_placeholder_when_no_camera()
     test_static_urdf_and_meshes_served()
+    test_calib_refuses_while_driver_alive()
+    test_calib_eeprom_needs_typed_confirmation()
+    test_calib_full_flow_writes_table()
     print("WEB API TESTS PASSED")

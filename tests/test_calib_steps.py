@@ -4,22 +4,16 @@ import os
 
 os.environ.setdefault("ROS_DOMAIN_ID", "77")  # NEVER touch a live session
 
+import sys
 import threading
 import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # for `stubs` below
+
+from stubs import StubBus  # noqa: E402 - shared with tests/test_web_api.py
 
 from elrobot.calibration.steps import derive_table, gate_ranges, read_ranges
-
-
-class StubBus:
-    def __init__(self, positions):
-        self.pos = dict(positions)          # name -> ticks
-        self.writes = []
-
-    def sync_read(self, item, names=None, normalize=False):
-        return {n: self.pos[n] for n in (names or self.pos)}
-
-    def sync_write(self, item, values, normalize=False):
-        self.writes.append((item, dict(values)))
 
 
 def test_read_ranges_tracks_min_max():

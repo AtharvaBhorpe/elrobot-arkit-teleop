@@ -26,6 +26,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 
 from elrobot.control.cartesian_ik import ARM_JOINTS, GRIPPER_JOINT
+from elrobot.web.calib import CalibError, CalibSession
 
 JOINTS = ARM_JOINTS + [GRIPPER_JOINT]
 STALE_S = 1.0
@@ -99,9 +100,10 @@ class WebBridge:
         return len(self.node.get_publishers_info_by_topic("/joint_states")) > 0
 
 
-def create_app(bridge) -> FastAPI:
+def create_app(bridge, bus_factory=None) -> FastAPI:
     app = FastAPI(title="elrobot cockpit")
     app.state.bridge = bridge
+    calib = CalibSession(bus_factory=bus_factory)
 
     @app.get("/api/status")
     def status():
@@ -114,6 +116,57 @@ def create_app(bridge) -> FastAPI:
             "joints": bridge.latest_q,
             "age_s": time.monotonic() - bridge.latest_stamp,
         }
+
+    @app.post("/api/calib/start")
+    def calib_start():
+        alive = bridge.driver_alive() if hasattr(bridge, "driver_alive") else False
+        try:
+            return calib.start(alive)
+        except CalibError as e:
+            raise HTTPException(e.code, e.detail) from e
+
+    @app.post("/api/calib/sweep/begin")
+    def calib_sweep_begin():
+        try:
+            return calib.sweep_begin()
+        except CalibError as e:
+            raise HTTPException(e.code, e.detail) from e
+
+    @app.post("/api/calib/sweep/end")
+    def calib_sweep_end():
+        try:
+            return calib.sweep_end()
+        except CalibError as e:
+            raise HTTPException(e.code, e.detail) from e
+
+    @app.get("/api/calib/state")
+    def calib_state():
+        return calib.snapshot()
+
+    @app.post("/api/calib/eeprom")
+    def calib_eeprom(body: dict):
+        try:
+            return calib.eeprom(body.get("confirm", ""))
+        except CalibError as e:
+            raise HTTPException(e.code, e.detail) from e
+
+    @app.post("/api/calib/sign")
+    def calib_sign(body: dict):
+        try:
+            return calib.sign(body["joint"], bool(body.get("flip")))
+        except CalibError as e:
+            raise HTTPException(e.code, e.detail) from e
+
+    @app.post("/api/calib/finish")
+    def calib_finish(body: dict = None):
+        # `out` override exists ONLY so offline tests never touch the real,
+        # hand-measured calibration/urdf_ticks.json - the wizard UI never
+        # sends it, so real use always writes the real path.
+        out = (body or {}).get("out", "calibration/urdf_ticks.json")
+        try:
+            return calib.finish(out=out)
+        except CalibError as e:
+            raise HTTPException(e.code, e.detail) from e
 
     @app.post("/api/control")
     def control(body: dict):

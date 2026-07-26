@@ -59,7 +59,39 @@
       </div>
     </div>
     <div class="panel" id="tab-calibrate">
-      <p>Calibrate panel - wired in Task 7</p>
+      <div class="card" style="padding: 16px; max-width: 640px;">
+        <p id="calib-status" class="muted" style="margin: 0 0 12px;">idle</p>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;">
+          <button id="calib-start">Start preflight</button>
+          <button id="calib-sweep-begin" disabled>Begin sweep</button>
+          <button id="calib-sweep-end" disabled>End sweep</button>
+          <button id="calib-eeprom-open" disabled>Write EEPROM…</button>
+          <button id="calib-finish" disabled>Finish</button>
+        </div>
+        <div id="calib-signs" style="display: none; margin-bottom: 12px;">
+          <p class="muted" style="margin: 0 0 6px;">Sign check - flip if the model
+            moved opposite the real joint:</p>
+          <div id="calib-sign-rows" style="display: flex; flex-wrap: wrap; gap: 6px;"></div>
+        </div>
+        <pre id="calib-gate" class="muted"
+             style="margin: 0; font-size: 12px; white-space: pre-wrap;"></pre>
+      </div>
+
+      <dialog id="calib-eeprom-dialog" style="border: 1px solid var(--border);
+              border-radius: calc(var(--radius) + 4px); padding: 20px; max-width: 420px;">
+        <p style="margin: 0 0 8px; font-weight: 600;">Write homing offsets to EEPROM</p>
+        <p class="muted" style="margin: 0 0 12px; font-size: 13px;">
+          This writes to the servos and invalidates the current table. There is
+          no partial redo - type ERASE to confirm.</p>
+        <input id="calib-eeprom-input" type="text" placeholder="ERASE"
+               style="width: 100%; padding: 8px; border: 1px solid var(--border);
+                      border-radius: var(--radius); margin-bottom: 12px;
+                      background: var(--background); color: var(--foreground);">
+        <div style="display: flex; gap: 8px; justify-content: flex-end;">
+          <button id="calib-eeprom-cancel">Cancel</button>
+          <button id="calib-eeprom-confirm" class="primary" disabled>Write EEPROM</button>
+        </div>
+      </dialog>
     </div>
     <div class="panel" id="tab-record">
       <p>Record panel - wired in Task 8</p>

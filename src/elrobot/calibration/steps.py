@@ -22,6 +22,20 @@ ENC = 4096
 SANE_TOLERANCE = 0.20  # same rule as m1a's check_ranges
 TCP_FRAME = "Gripper_Base_v1_1"
 DISCRIMINATING_CM = 5.0  # verify_table's threshold for "sign is testable here"
+MODEL = "sts3215"
+
+
+def build_bus(port):
+    """Identical bus construction that used to be duplicated in
+    m1a_calibrate.build_bus and m1b_reconcile.build_bus (8 motors,
+    RANGE_M100_100 - the control path never uses lerobot normalization,
+    only M1a's own range-sanity check does)."""
+    from lerobot.motors import Motor, MotorNormMode
+    from lerobot.motors.feetech import FeetechMotorsBus
+
+    motors = {f"rev_motor_{i:02d}": Motor(i, MODEL, MotorNormMode.RANGE_M100_100)
+             for i in range(1, 9)}
+    return FeetechMotorsBus(port=port, motors=motors, calibration=None)
 
 
 def read_ranges(bus, joints, poll_s=0.05, stop=None):
@@ -54,6 +68,37 @@ def unwrap(prev_raw, raw, acc):
     elif d < -ENC // 2:
         d += ENC
     return acc + d
+
+
+def read_range_unwrapped(bus, joint, poll_s=0.05, stop=None):
+    """Web-wizard equivalent of m1b's sweep_range (ENTER-to-stop -> a stop
+    Event): for FULL-TURN joints (05/07) plain min/max ticks are meaningless
+    once the sweep crosses the 0/4095 wrap, so this tracks unwrapped
+    cumulative travel instead, same as the CLI's interactive sweep. This is
+    NOT the same range M1a assigns those joints (0..4095, a placeholder only
+    used for lerobot's normalization sanity check) - the real tick range
+    derive_table needs for these two joints comes from here.
+    """
+    raw = bus.sync_read("Present_Position", [joint], normalize=False)[joint]
+    start_raw, prev, acc = raw, raw, 0
+    lo = hi = 0
+    while not (stop is not None and stop.is_set()):
+        time.sleep(poll_s)
+        raw = bus.sync_read("Present_Position", [joint], normalize=False)[joint]
+        acc = unwrap(prev, raw, acc)
+        prev = raw
+        lo, hi = min(lo, acc), max(hi, acc)
+    return start_raw + lo, start_raw + hi
+
+
+def read_urdf_limits(joints, urdf="docs/urdf_Elrobot.urdf"):
+    """{name: (q_lo, q_hi)} for the given joint names - what derive_table's
+    `limits` param needs. Same lookup m1b_reconcile/verify_table do inline."""
+    model = pin.buildModelFromUrdf(urdf)
+    jid = {model.names[j]: j for j in range(1, model.njoints)}
+    return {n: (model.lowerPositionLimit[model.joints[jid[n]].idx_q],
+               model.upperPositionLimit[model.joints[jid[n]].idx_q])
+           for n in joints}
 
 
 def gate_ranges(ranges: dict, urdf_spans_rad: dict) -> list:
