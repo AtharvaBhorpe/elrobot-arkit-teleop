@@ -71,14 +71,32 @@ def test_ws_streams_state_and_gates_commands():
 
 
 def test_mjpeg_placeholder_when_no_camera():
+    # The /cam/{name} generator streams forever (real browsers consume it
+    # frame by frame); TestClient's ASGI transport buffers a response
+    # fully before returning it, so reading a live HTTP response here
+    # would hang forever waiting for a stream that never ends. Instead,
+    # call the route's endpoint function directly and pull one frame
+    # from its real body_iterator - same production code, no HTTP layer.
+    import asyncio
+
     b = FakeBridge()
     b.latest_jpeg = {}                     # no camera has published
-    c = TestClient(create_app(b))
-    with c.stream("GET", "/cam/wrist") as r:
-        assert r.status_code == 200
-        assert "multipart/x-mixed-replace" in r.headers["content-type"]
-        chunk = next(r.iter_bytes(1024))
-        assert b"--frame" in chunk and b"\xff\xd8" in chunk   # JPEG SOI
+    app = create_app(b)
+    route = next(r for r in app.routes if getattr(r, "path", None) == "/cam/{name}")
+
+    async def first_frame(name):
+        resp = route.endpoint(name=name)
+        it = resp.body_iterator
+        chunk = await it.__anext__()
+        await it.aclose()
+        return resp, chunk
+
+    resp, chunk = asyncio.run(first_frame("wrist"))
+    assert resp.status_code == 200
+    assert "multipart/x-mixed-replace" in resp.media_type
+    assert b"--frame" in chunk and b"\xff\xd8" in chunk   # JPEG SOI
+
+    c = TestClient(app)
     assert c.get("/cam/nope").status_code == 404
 
 

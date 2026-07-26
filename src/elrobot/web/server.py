@@ -150,17 +150,18 @@ def create_app(bridge) -> FastAPI:
             raise HTTPException(404)
 
         def gen():
-            count = 0
-            max_frames = 1000  # ponytail: limit for testing; real stream
-            # is infinite but client-driven by browser consumption
-            while count < max_frames:
-                count += 1
+            # sync generator (Starlette runs it in a thread pool): a
+            # blocking time.sleep here is fine and, unlike an async
+            # generator's asyncio.sleep, closes cleanly on early client
+            # disconnect instead of leaking a live task in the event loop
+            while True:
                 jpeg, ts = getattr(bridge, "latest_jpeg", {}).get(
                     name, (None, 0.0))
                 if jpeg is None or time.monotonic() - ts > 2.0:
                     jpeg = _placeholder(name)
                 yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
                        + jpeg + b"\r\n")
+                time.sleep(1 / 15)
 
         return StreamingResponse(
             gen(), media_type="multipart/x-mixed-replace; boundary=frame")
