@@ -112,9 +112,14 @@ def test_mjpeg_placeholder_when_no_camera():
 def test_static_urdf_and_meshes_served():
     b = FakeBridge()
     c = TestClient(create_app(b))
-    assert c.get("/").status_code == 200
+    index_resp = c.get("/")
+    assert index_resp.status_code == 200
     r = c.get("/urdf")
     assert r.status_code == 200
+    # no-store on both: a stale cached /urdf once reproduced an
+    # already-fixed mesh-path bug in a live browser until a hard refresh
+    assert index_resp.headers["cache-control"] == "no-store"
+    assert r.headers["cache-control"] == "no-store"
     # relative "meshes/x.dae", NOT "/meshes/x.dae" - URDFLoader resolves
     # non-package:// mesh paths via plain string concatenation with its
     # workingPath ("/" for a URDF served at /urdf), so a leading slash here

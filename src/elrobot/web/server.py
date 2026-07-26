@@ -19,6 +19,7 @@ import numpy as np
 from fastapi import (
     FastAPI,
     HTTPException,
+    Response,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -250,11 +251,18 @@ def create_app(bridge, bus_factory=None) -> FastAPI:
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
     @app.get("/", response_class=HTMLResponse)
-    def index():
+    def index(response: Response):
+        # no-store: index.html and /urdf are read from disk on every
+        # request and can change between sessions (URDF regeneration,
+        # active dev). A stale cached /urdf here once masked a real fix -
+        # the browser kept resolving mesh paths from a cached pre-fix
+        # copy, reproducing an already-fixed bug until a hard refresh.
+        response.headers["Cache-Control"] = "no-store"
         return (STATIC / "index.html").read_text()
 
     @app.get("/urdf", response_class=PlainTextResponse)
-    def urdf():
+    def urdf(response: Response):
+        response.headers["Cache-Control"] = "no-store"
         text = (ROOT / "docs" / "urdf_Elrobot_viz.urdf").read_text()
         # 'filename="...anything.../mesh.dae"' -> 'filename="meshes/mesh.dae"'
         # (relative, NOT "/meshes/...") - URDFLoader resolves non-package://
