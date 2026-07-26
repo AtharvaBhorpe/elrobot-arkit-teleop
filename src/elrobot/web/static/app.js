@@ -157,14 +157,27 @@ async function refreshCalib() {
   renderCalib(await r.json());
 }
 
-calibEl.start.addEventListener("click", () =>
-  calibApi("/api/calib/start").then(renderCalib).catch(alert));
-calibEl.sweepBegin.addEventListener("click", () =>
-  calibApi("/api/calib/sweep/begin").then(renderCalib).catch(alert));
-calibEl.sweepEnd.addEventListener("click", () =>
-  calibApi("/api/calib/sweep/end").then(renderCalib).catch(alert));
-calibEl.finish.addEventListener("click", () =>
-  calibApi("/api/calib/finish").then(renderCalib).catch(alert));
+// Show failures inline in the status line rather than a browser alert().
+// The common one is a legitimate 409: the wizard refuses to open the serial
+// port while the driver is running (single-owner rule), and the operator
+// needs to read that, not dismiss a popup.
+function calibError(e) {
+  calibEl.status.textContent = e.message;
+  calibEl.status.classList.add("err");
+  setTimeout(refreshCalib, 4000);   // fall back to real state after reading
+}
+
+function calibAction(path) {
+  calibEl.status.classList.remove("err");
+  calibApi(path).then(renderCalib).catch(calibError);
+}
+
+calibEl.start.addEventListener("click", () => calibAction("/api/calib/start"));
+calibEl.sweepBegin.addEventListener("click",
+  () => calibAction("/api/calib/sweep/begin"));
+calibEl.sweepEnd.addEventListener("click",
+  () => calibAction("/api/calib/sweep/end"));
+calibEl.finish.addEventListener("click", () => calibAction("/api/calib/finish"));
 
 calibEl.eepromOpen.addEventListener("click", () => {
   calibEl.eepromInput.value = "";
@@ -181,7 +194,8 @@ calibEl.eepromConfirm.addEventListener("click", async () => {
     renderCalib(snap);
     calibEl.dialog.close();
   } catch (e) {
-    alert(e.message);
+    calibEl.dialog.close();
+    calibError(e);
   }
 });
 
@@ -202,12 +216,20 @@ const recordEl = {
 };
 
 function renderRecord(status) {
+  // status is null until a /record/status message arrives, i.e. until the
+  // recorder node is actually running. Say so plainly and disable the
+  // buttons: POST /api/record would happily return 200 (the web backend
+  // publishes /record/cmd fine) while nothing at all is listening, which
+  // looks exactly like a broken Start button.
+  const online = !!status;
   const recording = !!(status && status.recording);
-  recordEl.count.textContent = status ? status.episodes : "0";
-  recordEl.frames.textContent = recording ? `recording - ${status.frames} frames` : "";
-  recordEl.start.disabled = recording;
-  recordEl.stop.disabled = !recording;
-  recordEl.discard.disabled = !recording;
+  recordEl.count.textContent = online ? status.episodes : "--";
+  recordEl.start.disabled = !online || recording;
+  recordEl.stop.disabled = !online || !recording;
+  recordEl.discard.disabled = !online || !recording;
+  recordEl.frames.textContent = !online
+    ? "recorder not running - start it in its own terminal: pixi run record"
+    : (recording ? `recording - ${status.frames} frames` : "");
 }
 renderRecord(null);
 

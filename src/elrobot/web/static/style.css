@@ -214,7 +214,10 @@ main {
 }
 
 /* Narrow screens: fall back to scrolling rather than crushing everything */
-@media (max-width: 1400px) {
+/* 1fr stage + 340 deck + 300 rail + gaps/padding needs ~1100px to still
+   make sense; below that stack into one scrolling column. Kept at 1200 so
+   the three columns survive with DevTools docked open on a 2K screen. */
+@media (max-width: 1200px) {
   html, body {
     height: auto;
     overflow: auto;
@@ -413,6 +416,13 @@ canvas {
 .muted {
   color: var(--muted-foreground);
   font-size: 13px;
+}
+
+/* inline error text (e.g. the calibration wizard's 409 while the driver
+   is running) - read in place instead of in a browser alert() */
+.err {
+  color: var(--destructive);
+  font-weight: 500;
 }
 
 button:disabled {
