@@ -165,17 +165,36 @@ main {
   flex: 1;
   min-height: 0;              /* lets children shrink instead of overflowing */
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-columns: minmax(0, 1fr) 340px 300px;
   gap: 12px;
   padding: 12px 16px;
 }
 
-/* Left column: cameras row (fixed), 3D viewer (fills), toggled panels */
+/* Left column: cameras row (fixed height) above the 3D viewer (fills) */
 .stage {
   display: flex;
   flex-direction: column;
   gap: 10px;
   min-height: 0;
+}
+
+/* Middle column: the toggle buttons and whatever panels they open */
+.deck {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;           /* panels scroll here, not the page */
+}
+
+.deck-hint {
+  margin: 4px 2px;
+  font-size: 12.5px;
+}
+
+/* Hidden once anything is open - JS sets data-open on .deck */
+.deck[data-open] .deck-hint {
+  display: none;
 }
 
 /* Both feeds side by side, always visible, above the 3D view. Height is
@@ -186,7 +205,7 @@ main {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
-  height: clamp(150px, 27vh, 320px);
+  height: clamp(160px, 31vh, 360px);
 }
 
 .viewer {
@@ -195,7 +214,7 @@ main {
 }
 
 /* Narrow screens: fall back to scrolling rather than crushing everything */
-@media (max-width: 1100px) {
+@media (max-width: 1400px) {
   html, body {
     height: auto;
     overflow: auto;
@@ -205,6 +224,9 @@ main {
   }
   .viewer {
     min-height: 380px;
+  }
+  .deck {
+    overflow-y: visible;      /* page scrolls in this mode, not the column */
   }
 }
 
@@ -314,10 +336,7 @@ body:not([data-control]) .joint output {
 
 .panel {
   display: none;
-  flex: none;                 /* opens at content height, doesn't fight the viewer */
-  min-height: 0;
-  max-height: 34vh;
-  overflow-y: auto;           /* long panel content scrolls in place */
+  flex: none;                 /* content height; .deck scrolls if both are open */
 }
 
 .panel.active {

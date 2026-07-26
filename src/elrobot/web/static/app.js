@@ -69,12 +69,16 @@ function setPill(id, ok, text) {
 
 // Calibrate / Record are independent toggles, not tabs: the cameras and the
 // 3D view are always on screen, and these panels open below them on demand.
+const deck = document.querySelector(".deck");
 document.querySelectorAll(".toggles button[data-panel]").forEach((btn) => {
   btn.addEventListener("click", () => {
     const panel = document.getElementById(`panel-${btn.dataset.panel}`);
     const open = !panel.classList.contains("active");
     panel.classList.toggle("active", open);
     btn.setAttribute("aria-pressed", String(open));
+    // data-open drives the "Toggle Calibrate or Record above" hint
+    deck.toggleAttribute("data-open",
+      deck.querySelectorAll(".panel.active").length > 0);
   });
 });
 

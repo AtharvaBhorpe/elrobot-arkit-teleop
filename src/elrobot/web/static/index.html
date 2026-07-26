@@ -49,8 +49,10 @@
       <div class="card viewer">
         <div id="scene3d"></div>
       </div>
+    </div><!-- /.stage -->
 
-      <!-- On-demand: toggled panels open below the 3D view -->
+    <!-- Middle column: on-demand panels, toggled open from here -->
+    <div class="deck">
       <div class="toggles">
         <button id="toggle-calibrate" aria-pressed="false"
                 data-panel="calibrate">Calibrate</button>
@@ -58,8 +60,10 @@
                 data-panel="record">Record</button>
       </div>
 
+      <p class="deck-hint muted">Toggle Calibrate or Record above.</p>
+
     <div class="panel" id="panel-calibrate">
-      <div class="card" style="padding: 16px;">
+      <div class="card" style="padding: 14px;">
         <p id="calib-status" class="muted" style="margin: 0 0 12px;">idle</p>
         <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;">
           <button id="calib-start">Start preflight</button>
@@ -94,22 +98,20 @@
       </dialog>
     </div>
     <div class="panel" id="panel-record">
-      <div class="card" style="padding: 14px 16px; display: flex; align-items: center;
-                                gap: 24px; flex-wrap: wrap;">
-        <div>
-          <div style="font-size: 28px; font-weight: 600; line-height: 1.1;"
-               id="record-count">0</div>
-          <div class="muted">episodes</div>
+      <div class="card" style="padding: 14px;">
+        <div style="display: flex; align-items: baseline; gap: 8px;">
+          <span style="font-size: 26px; font-weight: 600;" id="record-count">0</span>
+          <span class="muted">episodes</span>
         </div>
-        <div style="display: flex; gap: 8px;">
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px;">
           <button id="record-start" class="primary">Start episode</button>
           <button id="record-stop" disabled>Stop &amp; keep</button>
           <button id="record-discard" disabled>Discard</button>
         </div>
-        <span class="muted" id="record-frames"></span>
+        <div class="muted" id="record-frames" style="margin-top: 8px;"></div>
       </div>
     </div>
-    </div><!-- /.stage -->
+    </div><!-- /.deck -->
 
     <div class="card rail">
       <h3 class="rail-title">Joints</h3>
