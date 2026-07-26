@@ -21,8 +21,10 @@ export function makeScene(el) {
   const loader = new URDFLoader();
   const dae = new ColladaLoader();
   loader.loadMeshCb = (path, mgr, done) =>
-    dae.load(path, (res) => done(res.scene));
-  loader.load("/urdf", (r2) => { robot = r2; scene.add(robot); });
+    dae.load(path, (res) => done(res.scene),
+      undefined, (err) => console.error("mesh load failed:", path, err));
+  loader.load("/urdf", (r2) => { robot = r2; scene.add(robot); },
+    undefined, (err) => console.error("URDF load failed:", err));
 
   // minimal orbit (drag to rotate, wheel to zoom) - no OrbitControls dep
   let drag = null, theta = 0.8, phi = 1.1, dist = 0.75;

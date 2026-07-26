@@ -115,9 +115,16 @@ def test_static_urdf_and_meshes_served():
     assert c.get("/").status_code == 200
     r = c.get("/urdf")
     assert r.status_code == 200
-    assert 'filename="/meshes/' in r.text          # rewritten
+    # relative "meshes/x.dae", NOT "/meshes/x.dae" - URDFLoader resolves
+    # non-package:// mesh paths via plain string concatenation with its
+    # workingPath ("/" for a URDF served at /urdf), so a leading slash here
+    # would concatenate into "//meshes/x.dae", a protocol-relative URL the
+    # browser reads as host "meshes" (confirmed against the real vendored
+    # URDFLoader.js - see server.py's comment on the /urdf route)
+    assert 'filename="meshes/' in r.text
+    assert 'filename="/meshes/' not in r.text
     assert "data/viz_meshes" not in r.text          # no filesystem paths leak
-    one = r.text.split('filename="/meshes/')[1].split('"')[0]
+    one = r.text.split('filename="meshes/')[1].split('"')[0]
     assert c.get(f"/meshes/{one}").status_code == 200
 
 

@@ -256,9 +256,18 @@ def create_app(bridge, bus_factory=None) -> FastAPI:
     @app.get("/urdf", response_class=PlainTextResponse)
     def urdf():
         text = (ROOT / "docs" / "urdf_Elrobot_viz.urdf").read_text()
-        # 'filename="...anything.../mesh.dae"' -> 'filename="/meshes/mesh.dae"'
+        # 'filename="...anything.../mesh.dae"' -> 'filename="meshes/mesh.dae"'
+        # (relative, NOT "/meshes/...") - URDFLoader resolves non-package://
+        # mesh paths as `workingPath + path` via plain string concatenation
+        # (its own resolvePath()), and workingPath for a URDF served from
+        # /urdf is THREE.LoaderUtils.extractUrlBase("/urdf") = "/". An
+        # absolute "/meshes/x.dae" here would concatenate to "//meshes/x.dae"
+        # - a PROTOCOL-RELATIVE URL the browser reads as host "meshes",
+        # silently failing every mesh fetch (confirmed: robot never
+        # rendered, only the grid, despite /urdf itself returning 200).
+        # A relative "meshes/x.dae" concatenates to the correct "/meshes/x.dae".
         return re.sub(r'filename="[^"]*/([^/"]+\.dae)"',
-                      r'filename="/meshes/\1"', text)
+                      r'filename="meshes/\1"', text)
 
     @app.get("/meshes/{name}")
     def mesh(name: str):
