@@ -8,10 +8,11 @@ commands a robot — do not port-forward it.
     pixi run web        # http://<host>:8080
 """
 
+import asyncio
 import threading
 import time
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from elrobot.control.cartesian_ik import ARM_JOINTS, GRIPPER_JOINT
 
@@ -76,6 +77,41 @@ def create_app(bridge) -> FastAPI:
             "joints": bridge.latest_q,
             "age_s": time.monotonic() - bridge.latest_stamp,
         }
+
+    @app.post("/api/control")
+    def control(body: dict):
+        bridge.control_on = bool(body.get("on"))
+        return {"control_on": bridge.control_on,
+                "seed": dict(bridge.latest_q) if bridge.control_on else {}}
+
+    @app.websocket("/ws")
+    async def ws(sock: WebSocket):
+        await sock.accept()
+
+        async def sender():
+            while True:
+                alive = (bridge.driver_alive()
+                         if hasattr(bridge, "driver_alive") else False)
+                await sock.send_json({
+                    "type": "state", "joints": bridge.latest_q,
+                    "age_s": time.monotonic() - bridge.latest_stamp,
+                    "control_on": bridge.control_on,
+                    "commanders": bridge.commanders(),
+                    "driver_alive": alive,
+                })
+                await asyncio.sleep(1 / 30)
+
+        send_task = asyncio.create_task(sender())
+        try:
+            while True:
+                msg = await sock.receive_json()
+                if msg.get("type") == "cmd" and bridge.control_on:
+                    bridge.publish_command(msg["positions"])
+        except WebSocketDisconnect:
+            pass
+        finally:
+            send_task.cancel()
+            # tab gone -> stop commanding; driver deadman freezes the arm
 
     return app
 
