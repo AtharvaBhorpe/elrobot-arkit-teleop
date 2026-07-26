@@ -544,6 +544,21 @@ def test_physical_replay_is_exclusive_with_slider_control():
     assert r.status_code == 409 and "disarm replay" in r.json()["detail"]
 
 
+def test_control_refusal_carries_a_usable_message():
+    """The client shows response.detail verbatim when /api/control is
+    refused, so the refusal has to say what to do about it. Observed: the
+    switch flipped ON against a 409 because the client passed the missing
+    control_on into toggleAttribute, which TOGGLES when its force argument is
+    undefined - the UI claimed control the server had denied."""
+    c, _ = _physical_client()
+    c.post("/api/replay/arm", json={"on": True})
+    r = c.post("/api/control", json={"on": True})
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert "disarm" in detail.lower()          # names the required action
+    assert "replay" in detail.lower()          # names what is holding it
+
+
 def test_physical_replay_caps_speed():
     c, _ = _physical_client()
     c.post("/api/replay/arm", json={"on": True})
@@ -628,6 +643,7 @@ if __name__ == "__main__":
     test_physical_replay_refuses_until_armed()
     test_physical_replay_needs_a_driver()
     test_physical_replay_is_exclusive_with_slider_control()
+    test_control_refusal_carries_a_usable_message()
     test_physical_replay_caps_speed()
     test_physical_replay_seeks_start_then_streams_and_stops()
     test_replay_survives_a_missing_dataset()

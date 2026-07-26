@@ -468,3 +468,10 @@ dialog {
 #banner.show {
   display: block;
 }
+
+/* Web-control switch while physical replay holds /joint_command: it is not
+   available, and the click handler explains why. */
+.switch-track.blocked {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

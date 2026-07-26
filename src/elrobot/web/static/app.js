@@ -64,6 +64,16 @@ setInterval(() => {
 
 let ws;
 let isOwner = true;      // server decides; assume yes until told otherwise
+
+// Transient message in the banner, held against the 30 Hz state stream that
+// would otherwise overwrite it on the very next tick.
+let bannerHoldUntil = 0;
+function flashBanner(msg, ms = 5000) {
+  const b = document.getElementById("banner");
+  b.textContent = msg;
+  b.classList.add("show");
+  bannerHoldUntil = Date.now() + ms;
+}
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onmessage = (e) => {
@@ -78,7 +88,9 @@ function connect() {
     // fully in control while every command it sent was silently discarded.
     isOwner = m.is_owner !== false;
     const banner = document.getElementById("banner");
-    if (!isOwner) {
+    if (Date.now() < bannerHoldUntil) {
+      // a flashed message is up; don't let the 30 Hz stream wipe it
+    } else if (!isOwner) {
       banner.textContent = `Monitor only — another cockpit tab has control `
         + `(${m.clients} connected). Close the other tab to take over.`;
       banner.classList.add("show");
@@ -108,16 +120,30 @@ connect();
 // Local UI state only - does not touch the server. Used when the server
 // tells us we are not the owner, and on socket close.
 function setControlUi(on) {
-  document.body.toggleAttribute("data-control", on);
-  master.toggleAttribute("data-on", on);
-  master.setAttribute("aria-checked", String(on));
+  // Coerce: toggleAttribute(name, undefined) FLIPS the attribute rather than
+  // clearing it (an omitted force argument means "toggle"). Passing a
+  // rejected response's missing control_on therefore turned the switch ON
+  // while the server had refused - the UI claimed control it did not have,
+  // and the 25 Hz sender started firing commands that were being dropped.
+  const want = !!on;
+  document.body.toggleAttribute("data-control", want);
+  master.toggleAttribute("data-on", want);
+  master.setAttribute("aria-checked", String(want));
 }
 
 async function setControl(on) {
   if (on && !isOwner) return;        // server would drop our commands anyway
-  const r = await fetch("/api/control", { method: "POST",
+  const res = await fetch("/api/control", { method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ on }) }).then((x) => x.json());
+    body: JSON.stringify({ on }) });
+  const r = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    // e.g. 409 while physical replay is armed - say so instead of silently
+    // leaving a switch that looks on but commands nothing.
+    flashBanner(r.detail || "web control was refused");
+    setControlUi(false);
+    return;
+  }
   setControlUi(r.control_on);
   for (const [n, v] of Object.entries(r.seed ?? {}))    // no-jump seeding
     if (rows[n]) { rows[n].inp.value = v; rows[n].out.textContent = v.toFixed(2); }
@@ -518,10 +544,15 @@ async function physApi(path, body) {
 
 function renderPhys(s) {
   if (!s) return;
-  pEl.arm.textContent = s.armed ? "Disarm" : "Arm";
-  pEl.arm.classList.toggle("primary", s.armed);
+  const armed = !!s.armed;         // coerced: toggle(name, undefined) flips
+  pEl.arm.textContent = armed ? "Disarm" : "Arm";
+  pEl.arm.classList.toggle("primary", armed);
+  // Web control cannot be taken while replay holds /joint_command; show that
+  // on the switch rather than only telling them after they click it.
+  master.classList.toggle("blocked", armed);
+  master.title = armed ? "disarm replay first" : "";
   const running = s.phase === "seeking" || s.phase === "playing";
-  pEl.play.disabled = !s.armed || running || replay.episode === null;
+  pEl.play.disabled = !armed || running || replay.episode === null;
   pEl.stop.disabled = !running;
   if (s.error) {
     pEl.status.textContent = s.error;
@@ -536,7 +567,7 @@ function renderPhys(s) {
         ? `running episode #${s.episode} — frame ${s.frame + 1}/${s.total}`
         : s.phase === "done"
           ? `finished episode #${s.episode}`
-          : (s.armed ? "armed — the arm will move when you press Run"
+          : (armed ? "armed — the arm will move when you press Run"
                      : "disarmed");
 }
 
