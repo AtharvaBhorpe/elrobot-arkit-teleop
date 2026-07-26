@@ -67,7 +67,7 @@ First time on new hardware: calibrate first — the guided procedure is the
 |---|---|
 | `m3-arm` / `m3-arm6` / `m3-arm5` | phone → real arm (7 / 6+1 / 5+1 DoF) |
 | `jog` | slider GUI → real arm (sliders seed from the real pose) |
-| `web` | browser cockpit on :8080 — sliders, live URDF, cams, calibrate, record |
+| `web` | browser cockpit on :8080 — sliders, live URDF, cams, calibrate, record ([guide](docs/web-cockpit-guide.md)) |
 | `view`, `m2` | visualization only, no hardware |
 | `cams` / `campick` / `rqt-cam` | camera nodes / identify devices / view feeds |
 | `record` / `bag` | LeRobotDataset episodes / mcap rosbag |

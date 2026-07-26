@@ -29,7 +29,7 @@ phone -UDP-> arkit_receiver -/target_pose-> ik -/joint_command-> elrobot_driver 
 |---|---|
 | `m3-arm` / `m3-arm6` / `m3-arm5` | phone drives real arm (7 / 6+1 / 5+1 DoF) |
 | `jog` | slider GUI drives real arm (sliders seed from real pose) |
-| `web` | browser cockpit on :8080 — sliders, live URDF, cams, calibrate, record |
+| `web` | browser cockpit on :8080 — sliders, live URDF, cams, calibrate, record (operator guide: `docs/web-cockpit-guide.md`) |
 | `cams`, `campick`, `rqt-cam` | camera nodes / identifier GUI / feed viewer |
 | `record`, `bag` | LeRobotDataset episodes / mcap rosbag |
 | `bridge` | Foxglove websocket :8765 (`rviz:=false` to drop rviz) |

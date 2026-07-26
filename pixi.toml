@@ -71,8 +71,11 @@ ticks = "python -m elrobot.tools.watch_ticks"
 
 # ── visualization only — no hardware ───────────────────────────────────
 
-# web cockpit — browser UI on http://<host>:8080 (LAN only, do not port-forward)
-web = "python -m elrobot.web.server"
+# web cockpit — browser UI on http://<host>:8080 (LAN only, do not port-forward).
+# Regenerates the viz URDF first, same as view/m3-arm/jog: that file is
+# gitignored, so without this a fresh clone serves /urdf as a 500 and the
+# 3D panel stays empty.
+web = "python -m elrobot.tools.make_viz_urdf && python -m elrobot.web.server"
 # URDF in rviz2 with joint sliders
 view = "python -m elrobot.tools.make_viz_urdf && ros2 launch launch/view.launch.py"
 # phone (ZIG SIM PRO -> UDP :50000) drives the model in rviz2
