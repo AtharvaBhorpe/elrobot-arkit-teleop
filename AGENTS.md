@@ -22,6 +22,10 @@ phone -UDP-> arkit_receiver -/target_pose-> ik -/joint_command-> elrobot_driver 
   relocated jaw frames, camera). Kinematics ALWAYS from docs/urdf_Elrobot.urdf.
 - `src/elrobot/web/` — FastAPI cockpit backend; an ordinary DDS commander,
   never touches serial (calibration wizard excepted, driver stopped).
+  `collection.py` is the atomic task/session/curation catalog,
+  `collection_manager.py` owns one managed recorder lifecycle and recovery,
+  `curation.py` resolves raw versus effective replay ranges, and `export.py`
+  builds immutable, traceable local LeRobot v3 datasets.
 
 ## Tasks
 
@@ -29,7 +33,7 @@ phone -UDP-> arkit_receiver -/target_pose-> ik -/joint_command-> elrobot_driver 
 |---|---|
 | `m3-arm` / `m3-arm6` / `m3-arm5` | phone drives real arm (7 / 6+1 / 5+1 DoF) |
 | `jog` | slider GUI drives real arm (sliders seed from real pose) |
-| `web` | browser cockpit on :8080 — sliders, live URDF, cams, calibrate, record (operator guide: `docs/web-cockpit-guide.md`) |
+| `web` | browser cockpit on :8080 — teleop, managed collection, reversible curation, replay, calibration, LeRobot v3 export (prints its URL; operator guide: `docs/web-cockpit-guide.md`) |
 | `cams`, `campick`, `rqt-cam` | camera nodes / identifier GUI / feed viewer |
 | `record`, `bag` | LeRobotDataset episodes / mcap rosbag |
 | `bridge` | Foxglove websocket :8765 (`rviz:=false` to drop rviz) |
@@ -39,7 +43,8 @@ phone -UDP-> arkit_receiver -/target_pose-> ik -/joint_command-> elrobot_driver 
 | `prove-env`, `test`, `lint` | env import gate / all offline suites / ruff |
 
 Env knobs (prefix any launch): `PORT= SCALE= ORIENT=0 SMOOTH= MAX_VEL=
-FREEZE= GRIP_LOAD_THRESH= GRIP_SQUEEZE= Z_MIN= R_MAX= RVIZ=0`.
+FREEZE= GRIP_LOAD_THRESH= GRIP_SQUEEZE= Z_MIN= R_MAX= RVIZ=0
+COLLECTION_ROOT=`.
 
 ## Hard rules (each earned by an incident)
 
@@ -89,7 +94,7 @@ FREEZE= GRIP_LOAD_THRESH= GRIP_SQUEEZE= Z_MIN= R_MAX= RVIZ=0`.
 
 ## Test suites (all offline-safe, run before committing driver/IK changes)
 
-`pixi run test` chains all six; they must all pass before committing.
+`pixi run test` chains all eight; they must all pass before committing.
 
 - `pixi run python tests/test_driver_safety.py` — 10 checks, stub bus
 - `pixi run python tests/test_m2_pipeline.py` — end-to-end, fake phone
@@ -99,3 +104,7 @@ FREEZE= GRIP_LOAD_THRESH= GRIP_SQUEEZE= Z_MIN= R_MAX= RVIZ=0`.
 - `pixi run python tests/test_web_api.py` — cockpit API, WS command gating,
   calibration wizard guards, replay (incl. the gates on moving the real arm)
 - `pixi run python tests/test_calib_steps.py` — calibration maths, stub bus
+- `pixi run python tests/test_collection.py` — atomic catalog, managed
+  recorder lifecycle, recovery, reversible curation metadata
+- `pixi run python tests/test_export.py` — multi-task trimmed LeRobot v3
+  export, versioning, source immutability, one-worker gate

@@ -1,7 +1,7 @@
 # Collection and Curation Cockpit — Design
 
 **Date:** 2026-07-28
-**Status:** Approved in brainstorming; ready for implementation planning
+**Status:** Implemented; offline verification passed; physical operator check pending
 
 ## Goal
 

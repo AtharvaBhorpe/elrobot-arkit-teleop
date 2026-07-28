@@ -1,8 +1,10 @@
 # Web Cockpit — Operator Guide
 
 A browser cockpit for the Elrobot arm: live 3D model, both camera feeds,
-joint sliders that drive the real arm, a guided calibration wizard, and
-episode recording + replay. Runs at `http://localhost:8080`.
+joint sliders that drive the real arm, a guided calibration wizard, and a
+task-labelled collection → curation → LeRobot v3 export workflow.
+`pixi run web` prints the URL when it starts (normally
+`http://localhost:8080`).
 
 > **The cockpit never touches the serial port.** It is an ordinary ROS 2
 > command source, exactly like the phone. Every safety mechanism — velocity
@@ -19,18 +21,21 @@ episode recording + replay. Runs at `http://localhost:8080`.
 
 ## 1. What to run alongside it
 
-The cockpit displays and relays; it does not host the driver, the cameras,
-or the recorder. Each of those is a separate process, and the cockpit tells
-you which ones are missing.
+The cockpit hosts its managed dataset recorder, but the driver and cameras
+remain separate processes.
 
 | You want to… | Run these (each in its own terminal) |
 |---|---|
 | Just look at the 3D model / cameras | `pixi run web` (+ `pixi run cams`) |
-| **Drive the arm from the browser** | `pixi run python -m elrobot.nodes.elrobot_driver` + `pixi run web` |
+| **Drive and collect from the browser** | `pixi run python -m elrobot.nodes.elrobot_driver` + `pixi run cams` + `pixi run web` |
 | Drive from the phone, watch in browser | `pixi run m3-arm` + `pixi run web` |
-| Record episodes | add `pixi run record` |
 | See camera feeds | add `pixi run cams` (see device note below) |
 | Calibrate | `pixi run web` **only** — driver must be stopped |
+
+Do not also run `pixi run record` while using managed collection. The cockpit
+detects the independent recorder and refuses to start a session rather than
+letting two recorder nodes compete for the same topics and dataset intent.
+The standalone command remains available for CLI-only capture.
 
 **Cameras need the right devices.** `cams` defaults to `/dev/video0` and
 `/dev/video2`, which on this machine are *not* the real cameras — they open
@@ -92,14 +97,18 @@ last, slew-limited. Turn one off unless you specifically want that.
 
 ## 3. The layout
 
-Three columns, all on one screen:
+The header switches between two workspaces without creating a second 3D
+renderer or another pair of camera pollers:
 
-- **Left** — both camera feeds side by side, above the live 3D model. Always
-  visible. Drag in the 3D view to orbit, scroll to zoom. The model mirrors
-  the real arm from `/joint_states` whether or not you are commanding it.
-- **Middle** — **Calibrate** and **Record** toggle buttons; their panels open
-  here on demand and close again.
-- **Right** — the joint rail: 8 sliders with live values.
+- **Teleop** — both camera feeds and the 3D model on the left, **Calibrate /
+  Collect** tabs in the middle, and joint sliders on the right.
+- **Curate** — task groups and episode list on the left, the same camera/3D
+  stage in the middle, and reversible review/replay/export controls on the
+  right.
+
+The camera/3D stage is always visible. Drag in the 3D view to orbit and scroll
+to zoom. The model mirrors the real arm from `/joint_states` whether or not
+you are commanding it.
 
 Camera frames are shown whole (letterboxed if the tile is a different
 aspect), never cropped — what you see is exactly what `episode_recorder`
@@ -138,45 +147,85 @@ wrong `/dev/video*` device. Fix it with `WRIST_DEV` / `EXT_DEV` above.
 
 ---
 
-## 6. Recording
+## 6. Collection and curation
 
-Requires `pixi run record` in its own terminal. If it is not running, the
-panel says so and the buttons are disabled — the count reads `--`.
+### Storage and saved tasks
 
-| Button | Effect |
-|---|---|
-| **Start episode** | Begin capturing. Takes a moment: the dataset/video encoder is created on the first start. |
-| **Stop & keep** | Save the episode and increment the count. |
-| **Discard** | Stop and throw the episode away (a fumbled attempt, a bad grasp). |
+Managed data lives under `data/collections` by default:
 
-While recording, the panel shows a live frame count. Terminal `ENTER`
-control still works exactly as before — the two are interchangeable.
+```text
+data/collections/
+├── catalog.json
+├── raw/<session-id>/             # immutable after session finish
+└── exports/<name>-vNNN/          # immutable curated LeRobot v3 output
+```
 
-Frames are skipped (with a warning in the recorder's terminal) whenever any
-stream is missing or stale, so a dead camera yields a short episode rather
-than silently corrupt data. If `action` (i.e. `/joint_command`) is the stale
-one, nothing is commanding the arm — start the driver and a commander.
+Set another root for a campaign with:
 
-Episodes accumulate in one dataset across runs; the recorder resumes an
-existing `--root` rather than starting over.
+```bash
+COLLECTION_ROOT=/data/elrobot-campaign pixi run web
+```
 
-Recording encodes both camera streams continuously with two encoder threads by
-default, so **Stop & keep** only drains the remaining frames instead of
-launching a large encoding burst. If saving still disturbs teleoperation on a
-smaller computer, run the recorder with `--encoder-threads 1`.
+The atomic `catalog.json` stores stable task IDs, session lifecycle, and
+reversible curation overlays. It never rewrites finalized raw datasets.
 
-### Replaying an episode
+In **Teleop → Collect**, create a saved task with a concise display name and
+the exact training instruction that should be written into LeRobot frames.
+Tasks may be edited later. Archive hides a task from new capture without
+breaking historical sessions or completed export manifests; restore makes it
+available again.
 
-Below the record controls: pick an episode from the dropdown to watch it back.
-**Play/Pause**, a scrubber, and **Stop** (which returns to live). While
-replaying, the 3D view follows the recorded joint positions and both camera
-panels show the recorded frames instead of the live feeds — **Refresh**
-re-reads the dataset to pick up episodes recorded since the page loaded.
+### Collect a session
 
-This is **visual only**: replay never publishes to `/joint_command`, so the
-arm does not move, and it is safe with or without the driver running. It
-answers "does this episode actually contain what I think it does?" — the
-dataset-QA step before training on it.
+1. Choose a saved task and optionally name the session.
+2. Press **Start collection**. One session may hold episodes from several
+   tasks.
+3. Press **Record episode** only when the driver/commander and both camera
+   streams are fresh.
+4. Press **Stop & keep** to save the take, or **Discard** to clear the
+   in-memory take without adding an episode.
+5. Between episodes, change **Episode task** if the next demonstration has a
+   different instruction.
+6. Press **Finish session**. Finalization validates episode counts and only
+   then exposes the session in Curate.
+
+Recording encodes both camera streams continuously with two encoder threads,
+so **Stop & keep** drains a small remainder rather than launching a large
+post-take encoding burst. Frames are skipped when any required stream is
+missing or stale; this produces an explicitly shorter take instead of silent
+corruption.
+
+If the cockpit or machine stops unexpectedly, open **Interrupted sessions**:
+
+- **Recover & finish** reconciles already-saved episodes against the
+  catalog's pending marker, finalizes, validates, and exposes the session.
+- **Archive incomplete** hides it without deleting any raw file.
+
+Frames that existed only in the recorder's unfinished memory buffer at the
+instant of a hard crash cannot be recovered.
+
+### Curate reversibly
+
+Open **Curate**, choose a task group, then an episode. Review decisions mean:
+
+- **Unreviewed** — not decided; never exported.
+- **Keep** — eligible for export if its effective task group is selected.
+- **Reject** — retained in raw storage and excluded from export.
+
+The review sidebar can reassign the effective task, add notes, and set one
+continuous trim. **Trim end is exclusive**: start `10`, end `80` keeps frames
+`10..79`. **Use full take** clears the trim. **View untouched raw episode**
+temporarily bypasses the overlay for inspection; it does not undo edits.
+
+Every change updates only `catalog.json`, so keep/reject/unreview, task
+assignment, trim, and notes remain reversible after restarts.
+
+### Visual replay
+
+The Curate player drives the existing 3D view and camera panels from the
+selected effective range. It never publishes `/joint_command`. Scrubbing,
+raw/curated switching, and reaching the end all remain visual-only; after the
+last frame, **Play** resets to frame zero so it can immediately be replayed.
 
 ### Replaying on the real arm
 
@@ -184,36 +233,57 @@ dataset-QA step before training on it.
 > keep the driver's terminal within reach, and treat this like the autonomous
 > rollout it effectively is.
 
-Under **On the real arm** in the same panel. It re-publishes the episode's
-recorded *action* stream to `/joint_command`, so every driver gate — velocity
-clamp, workspace box, singularity floor, joint limits, grasp latch — applies
-exactly as it does to the phone.
+The player re-publishes the selected range's recorded *action* stream to
+`/joint_command`, so every driver gate — velocity clamp, workspace box,
+singularity floor, joint limits, grasp latch — applies exactly as it does to
+the phone.
 
 1. Stop the phone/slider commander. Replay refuses to arm while **Web
-   control** is on, and `/api/control` refuses while replay is armed: two
-   automatic publishers on `/joint_command` have no arbitration between them.
-2. **Arm** — a separate deliberate act. Refuses if no driver is running,
+   control** is on, and `/api/control` refuses while replay is armed.
+2. **Arm** — a separate deliberate act. It refuses if no driver is running,
    since that is where every safety gate lives.
-3. Pick the episode in the dropdown above (the same one the visual player
-   uses), set **speed** (capped at 1.0 — never faster than recorded; 0.5 is
-   a sane first try).
-4. **Run on arm.** It first *seeks*: it holds the episode's opening pose and
-   lets the driver's own slew limiter walk the arm there at its configured
-   velocity, rather than jumping into the middle of a trajectory. Once every
-   joint is within 0.05 rad it streams the episode. If it cannot get there
-   within 45 s it gives up and says which joint is still off — usually
-   something blocked, or a safety gate holding.
+3. Select the same curated or raw episode used by visual replay. The default
+   armed replay speed is **0.6×**, capped at 1.0.
+4. **Run on arm.** It first *seeks*: it holds the selected range's opening
+   pose and lets the driver's slew limiter walk the arm there rather than
+   jumping into a trajectory. Once every joint is within 0.05 rad it streams
+   the episode. A 45 s seek timeout reports which joint remains off.
 5. **STOP** at any moment. Publishing ceases immediately and the driver's
-   deadman freezes the arm within 200 ms — the same stop semantics as
-   releasing the phone clutch.
+   deadman freezes the arm within 200 ms.
 
-Replay also stops itself if the driver disappears mid-run.
+Replay also stops if the driver disappears. Changing workspace mode, episode,
+trim, task assignment, or raw/curated view stops and disarms it before
+changing what the selection means.
 
-**A caveat worth respecting:** an episode reproduces only if the world is set
-up as it was when recorded. The recorded commands are replayed open-loop —
-nothing is watching the cameras — so an object in a different place will
-simply be missed, and the arm will confidently execute the old trajectory
-anyway.
+An episode reproduces only if the world is set up as it was when recorded.
+Physical replay is open-loop; nothing watches the cameras to correct a
+misplaced object.
+
+### Export LeRobot v3
+
+Only explicitly kept episodes are exportable. Press **Export kept episodes…**,
+choose one or more task groups, name the dataset, and **Validate selection**.
+The preview reports kept episode count, effective frame/duration total, and
+the next immutable version. Starting returns immediately while one supervised
+background worker copies and encodes the data.
+
+Completed exports are local and versioned:
+
+```text
+data/collections/exports/training-v001/
+data/collections/exports/training-v002/
+```
+
+Each source episode stays a distinct output episode; trimmed frames are
+omitted, indices are regenerated, and the current task instruction is written
+into every output frame. `curation-manifest.json` snapshots the catalog
+revision, task definitions, source session/index/range, and raw-tree SHA-256.
+Output is built under `.inprogress`, reload-validated as LeRobot v3, then
+atomically promoted. Existing versions are never overwritten.
+
+Training, policy evaluation, and inference controls are intentionally **not
+part of this milestone**. This cockpit now produces the traceable LeRobot v3
+dataset those later Python phases will consume.
 
 ---
 
@@ -306,12 +376,15 @@ vacuously.
 | Symptom | Cause |
 |---|---|
 | `driver down`, `---- ms`, sliders inert | No driver running. Start the driver (or `m3-arm`). |
-| Start episode does nothing / count `--` | `pixi run record` not running. |
+| Start collection reports a recorder conflict | An independent `pixi run record` is active. Stop it before managed collection. |
+| Record episode is refused | Driver/commander or one of the camera streams is missing or stale. |
+| Session appears under Interrupted sessions | Finalization was interrupted or validation failed; recover and finish it, or archive it without deleting raw files. |
+| Export is disabled or refused | No selected task group contains kept episodes, or source schemas/FPS differ. |
 | Camera tile: "no signal" | Cam node not running for that topic. |
 | Camera tile: black, no text | Wrong `/dev/video*`. Use `WRIST_DEV`/`EXT_DEV`. |
 | `Start preflight` → red 409 | Driver still running. Stop it; only one process may own the port. |
 | Layout collapses to one column | Viewport under 1200px (often DevTools docked open). Expected. |
-| 3D model missing after a URDF change | Hard refresh (Ctrl+Shift+R). `/` and `/urdf` send `no-store`, but `style.css` and the JS come through the static mount and can cache. |
+| 3D model missing after a URDF change | Reload the page. `/`, `/urdf`, and cockpit static assets send `no-store`. |
 | Console: `ColladaLoader … Z-UP` ×20 | Harmless. One per mesh; the loader is correctly handling Z-up assets. |
 
 **Leaving the arm:** stopping the driver leaves torque **ON**, holding
