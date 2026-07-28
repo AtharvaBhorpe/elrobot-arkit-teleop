@@ -142,7 +142,9 @@ class ReplayLibrary:
         ds = self._dataset()
         lo, hi = self._bounds(
             episode, start_frame, end_frame_exclusive)
-        return [np.asarray(ds[i]["action"]).tolist() for i in range(lo, hi)]
+        actions = ds.select_columns("action")
+        return [np.asarray(actions[i]["action"]).tolist()
+                for i in range(lo, hi)]
 
     def states(
         self, episode: int, start_frame=None, end_frame_exclusive=None,
@@ -153,7 +155,8 @@ class ReplayLibrary:
         ds = self._dataset()
         lo, hi = self._bounds(
             episode, start_frame, end_frame_exclusive)
-        rows = [np.asarray(ds[i]["observation.state"]).tolist()
+        states = ds.select_columns("observation.state")
+        rows = [np.asarray(states[i]["observation.state"]).tolist()
                 for i in range(lo, hi)]
         return {"fps": float(ds.fps), "names": JOINTS,
                 "frames": len(rows), "states": rows}

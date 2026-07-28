@@ -901,7 +901,7 @@ document.getElementById("curate-refresh").addEventListener(
 
 async function patchSelected(patch) {
   if (!selectedEpisode) return;
-  const key = episodeKey(selectedEpisode);
+  const replayChanged = Object.hasOwn(patch, "trim");
   await safeStopPhysical();
   try {
     await jsonRequest(
@@ -911,11 +911,7 @@ async function patchSelected(patch) {
       patch,
     );
     await refreshCurate();
-    selectedEpisode = curateEpisodes.find(
-      (episode) => episodeKey(episode) === key) ?? null;
-    renderEpisodeList();
-    renderEpisodeEditor();
-    if (selectedEpisode) await loadCuratedReplay();
+    if (replayChanged && selectedEpisode) await loadCuratedReplay();
   } catch (error) {
     rEl.status.textContent = error.message;
     rEl.status.classList.add("err");

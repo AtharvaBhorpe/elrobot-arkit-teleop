@@ -712,6 +712,60 @@ def test_collection_and_curate_shell_is_served():
         assert f'id="{element_id}"' in html
 
 
+def test_metadata_only_curation_updates_do_not_reload_visual_replay():
+    javascript = (
+        Path(__file__).resolve().parents[1]
+        / "src/elrobot/web/static/app.js"
+    ).read_text()
+    assert 'const replayChanged = Object.hasOwn(patch, "trim");' in javascript
+    assert (
+        "if (replayChanged && selectedEpisode) await loadCuratedReplay();"
+        in javascript
+    )
+
+
+def test_replay_vectors_do_not_decode_video_frames():
+    from elrobot.web.replay import ReplayLibrary
+
+    vectors = {
+        "observation.state": [[0.1] * 8, [0.2] * 8],
+        "action": [[0.3] * 8, [0.4] * 8],
+    }
+
+    class Columns:
+        def __init__(self, key):
+            self.key = key
+
+        def __getitem__(self, index):
+            return {self.key: vectors[self.key][index]}
+
+    class Dataset:
+        fps = 30
+
+        class Meta:
+            episodes = [{
+                "episode_index": 0,
+                "dataset_from_index": 0,
+                "dataset_to_index": 2,
+                "length": 2,
+                "tasks": ["Pick"],
+            }]
+
+        meta = Meta()
+
+        def __getitem__(self, index):
+            raise AssertionError("full frame access decodes recorded video")
+
+        def select_columns(self, key):
+            return Columns(key)
+
+    library = ReplayLibrary(root=tempfile.mkdtemp())
+    library._ds = Dataset()
+
+    assert library.states(0)["states"] == vectors["observation.state"]
+    assert library.actions(0) == vectors["action"]
+
+
 def test_replay_lists_and_serves_recorded_episodes():
     """Replay reads back what episode_recorder wrote, on a dataset this test
     builds itself."""
@@ -927,6 +981,8 @@ if __name__ == "__main__":
     test_curated_physical_replay_publishes_trimmed_actions()
     test_export_api_previews_starts_and_reports_status()
     test_collection_and_curate_shell_is_served()
+    test_metadata_only_curation_updates_do_not_reload_visual_replay()
+    test_replay_vectors_do_not_decode_video_frames()
     test_replay_lists_and_serves_recorded_episodes()
     test_replay_never_commands_the_arm()
     test_replay_reports_a_recorder_still_writing()
