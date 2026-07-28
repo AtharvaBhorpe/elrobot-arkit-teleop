@@ -160,6 +160,11 @@ one, nothing is commanding the arm — start the driver and a commander.
 Episodes accumulate in one dataset across runs; the recorder resumes an
 existing `--root` rather than starting over.
 
+Recording encodes both camera streams continuously with two encoder threads by
+default, so **Stop & keep** only drains the remaining frames instead of
+launching a large encoding burst. If saving still disturbs teleoperation on a
+smaller computer, run the recorder with `--encoder-threads 1`.
+
 ### Replaying an episode
 
 Below the record controls: pick an episode from the dropdown to watch it back.

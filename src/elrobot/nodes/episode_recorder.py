@@ -44,6 +44,13 @@ JOINTS = ARM_JOINTS + [GRIPPER_JOINT]
 STALE_S = 0.5
 
 
+def positive_int(value: str) -> int:
+    n = int(value)
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return n
+
+
 class Recorder(Node):
     def __init__(self, args):
         super().__init__("episode_recorder")
@@ -112,10 +119,11 @@ class Recorder(Node):
         # the same --root died with FileExistsError the moment you started an
         # episode - fatal for a multi-session collection campaign, where the
         # whole point is to keep adding episodes to one dataset.
+        writer_options = self._writer_options()
         if Path(self.args.root).exists():
             self.dataset = LeRobotDataset.resume(
                 repo_id=self.args.repo_id, root=self.args.root,
-                video_backend="pyav")
+                **writer_options)
             self.get_logger().info(
                 f"resumed {self.args.root} "
                 f"({self.dataset.num_episodes} episode(s) already recorded)")
@@ -123,9 +131,16 @@ class Recorder(Node):
             self.dataset = LeRobotDataset.create(
                 repo_id=self.args.repo_id, fps=int(self.args.fps),
                 features=feats, root=self.args.root, robot_type="elrobot",
-                video_backend="pyav")  # torchcodec can't bind this env's ffmpeg
+                **writer_options)
             self.get_logger().info(f"dataset created at {self.args.root}")
         self.episodes = self.dataset.num_episodes
+
+    def _writer_options(self) -> dict:
+        return {
+            "video_backend": "pyav",
+            "streaming_encoding": True,
+            "encoder_threads": self.args.encoder_threads,
+        }
 
     def _tick(self):
         if not self.recording:
@@ -175,9 +190,13 @@ class Recorder(Node):
     def stop(self):
         self.recording = False
         if self.dataset is not None and self.n_frames > 0:
+            frames = self.n_frames
+            started = time.perf_counter()
             self.dataset.save_episode()
+            elapsed = time.perf_counter() - started
             self.episodes += 1
-            self.get_logger().info(f"episode saved ({self.n_frames} frames)")
+            self.get_logger().info(
+                f"episode saved ({frames} frames, {elapsed:.2f}s)")
         else:
             self.get_logger().warning("nothing recorded, nothing saved")
 
@@ -235,6 +254,10 @@ def main():
     p.add_argument("--repo-id", default="local/elrobot_teleop")
     p.add_argument("--root", default="data/episodes/elrobot_teleop")
     p.add_argument("--task", default="teleop")
+    p.add_argument(
+        "--encoder-threads", type=positive_int, default=2,
+        help="LeRobot video encoder threads (default: 2; lower if save "
+             "disturbs teleop)")
     p.add_argument("--auto", type=float, default=None,
                    help="record ONE episode of N seconds, no keyboard (tests)")
     args, _ = p.parse_known_args()

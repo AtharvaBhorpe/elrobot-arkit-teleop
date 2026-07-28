@@ -26,9 +26,23 @@ import rclpy
 from sensor_msgs.msg import Image, JointState
 
 from elrobot.control.cartesian_ik import ARM_JOINTS, GRIPPER_JOINT, JAW_MIMIC  # noqa: E402
+from elrobot.nodes.episode_recorder import positive_int  # noqa: E402
 
 ROOT = Path("data/test_episodes")
 JOINTS = ARM_JOINTS + [GRIPPER_JOINT]
+
+
+def test_encoder_configuration():
+    assert positive_int("1") == 1
+    assert positive_int("2") == 2
+    for bad in ("0", "-1"):
+        try:
+            positive_int(bad)
+        except argparse.ArgumentTypeError:
+            pass
+        else:
+            raise AssertionError(
+                f"accepted invalid encoder thread count {bad}")
 
 
 def img_msg(node, value, w=64, h=48):
@@ -140,7 +154,8 @@ def test_record_cmd_topic():
             pubs["action"].publish(js_msg(fake, [0.2] * 8))))
 
         args = argparse.Namespace(fps=30.0, repo_id="local/elrobot_teleop",
-                                  root=str(root), task="test")
+                                  root=str(root), task="test",
+                                  encoder_threads=2)
         node = Recorder(args)
 
         statuses = []
@@ -158,6 +173,8 @@ def test_record_cmd_topic():
             pubs["cmd"].publish(String(data="start"))
             time.sleep(0.1)
         assert node.recording, "recorder never started via /record/cmd"
+        assert node.dataset._encoder_threads == 2
+        assert node.dataset.writer._streaming_encoder is not None
 
         # _status_tick fires once per second - hold recording comfortably
         # past that so at least one /record/status message is captured
@@ -234,6 +251,7 @@ def test_second_run_resumes_existing_dataset():
 
 
 def main():
+    test_encoder_configuration()
     test_subprocess_auto_episode()
     test_second_run_resumes_existing_dataset()
     test_record_cmd_topic()
