@@ -40,6 +40,9 @@ and joint rail. Hardware was intentionally disconnected for this capture.*
 visual replay, guarded physical replay, and export in one workspace. The
 episodes shown are synthetic documentation fixtures.*
 
+See the
+[animated collection, curation, and export walkthroughs](docs/web-cockpit-guide.md#6-collection-and-curation).
+
 ## Hardware
 
 | | |

@@ -194,6 +194,13 @@ available again.
 
 ### Collect a session
 
+![Choose a task, name the session, start collection, then finish](assets/cockpit-collect-workflow.gif)
+
+*Select the episode task, name the session, press **Start collection**, and
+finish when the session is complete. This offline walkthrough finishes an
+empty demonstration session; with the driver and cameras live, use **Record
+episode** followed by **Stop & keep** or **Discard** between those steps.*
+
 1. Choose a saved task and optionally name the session.
 2. Press **Start collection**. One session may hold episodes from several
    tasks.
@@ -222,6 +229,12 @@ Frames that existed only in the recorder's unfinished memory buffer at the
 instant of a hard crash cannot be recovered.
 
 ### Curate reversibly
+
+![Filter episodes, compare raw and trimmed views, then change the review decision](assets/cockpit-curate-workflow.gif)
+
+*Filter by task, select an episode, compare the curated range with untouched
+raw data, and change the reversible review decision. The final frame restores
+the take to **Keep**.*
 
 Open **Curate**, choose a task group, then an episode. Review decisions mean:
 
@@ -277,6 +290,12 @@ Physical replay is open-loop; nothing watches the cameras to correct a
 misplaced object.
 
 ### Export LeRobot v3
+
+![Select kept task groups and validate a versioned LeRobot export](assets/cockpit-export-workflow.gif)
+
+*Open export, name the dataset, choose kept task groups, and validate the
+preview before starting the background export. This walkthrough stops before
+**Start export**, so it does not create an output dataset.*
 
 Only explicitly kept episodes are exportable. Press **Export kept episodes…**,
 choose one or more task groups, name the dataset, and **Validate selection**.
