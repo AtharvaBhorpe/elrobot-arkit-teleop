@@ -13,6 +13,7 @@ import os
 import re
 import threading
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import cv2
@@ -30,6 +31,8 @@ from fastapi.staticfiles import StaticFiles
 from elrobot.calibration import backup
 from elrobot.control.cartesian_ik import ARM_JOINTS, GRIPPER_JOINT
 from elrobot.web.calib import CalibError, CalibSession
+from elrobot.web.collection import CatalogError, CollectionCatalog
+from elrobot.web.collection_manager import CollectionError, CollectionManager
 from elrobot.web.replay import PhysicalReplay, ReplayError, ReplayLibrary
 
 JOINTS = ARM_JOINTS + [GRIPPER_JOINT]
@@ -47,6 +50,8 @@ DEFAULT_PORT = os.environ.get("PORT", "/dev/ttyACM0")
 DEFAULT_DATASET_ROOT = os.environ.get(
     "DATASET_ROOT", "data/episodes/elrobot_teleop")
 DEFAULT_REPO_ID = os.environ.get("REPO_ID", "local/elrobot_teleop")
+DEFAULT_COLLECTION_ROOT = os.environ.get(
+    "COLLECTION_ROOT", "data/collections")
 
 ROOT = Path(__file__).resolve().parents[3]      # repo root
 STATIC = Path(__file__).resolve().parent / "static"
@@ -92,8 +97,12 @@ class WebBridge:
         self.node.create_subscription(String, "/record/status", self._on_record, 1)
         self._record_pub = self.node.create_publisher(String, "/record/cmd", 1)
         self._pub = self.node.create_publisher(JointState, "/joint_command", 1)
+        from rclpy.executors import MultiThreadedExecutor
+
+        self._executor = MultiThreadedExecutor(num_threads=2)
+        self._executor.add_node(self.node)
         self._spin = threading.Thread(
-            target=rclpy.spin, args=(self.node,), daemon=True)
+            target=self._executor.spin, daemon=True)
         self._spin.start()
 
     def _on_js(self, msg):
@@ -143,17 +152,30 @@ class WebBridge:
     def driver_alive(self) -> bool:
         return len(self.node.get_publishers_info_by_topic("/joint_states")) > 0
 
+    def add_node(self, node):
+        self._executor.add_node(node)
+
+    def remove_node(self, node):
+        self._executor.remove_node(node)
+
+    def external_recorder_alive(self):
+        return any(
+            info.node_name == "episode_recorder"
+            for info in self.node.get_publishers_info_by_topic(
+                "/record/status")
+        )
+
 
 def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
                dataset_root=DEFAULT_DATASET_ROOT,
                repo_id=DEFAULT_REPO_ID,
-               backup_root=backup.DEFAULT_ROOT) -> FastAPI:
-    app = FastAPI(title="elrobot cockpit")
-    app.state.bridge = bridge
+               backup_root=backup.DEFAULT_ROOT,
+               collection_root=DEFAULT_COLLECTION_ROOT,
+               recorder_factory=None,
+               dataset_validator=None) -> FastAPI:
     calib = CalibSession(bus_factory=bus_factory, port=port,
                          backup_root=backup_root)
     library = ReplayLibrary(root=dataset_root, repo_id=repo_id)
-    app.state.library = library
     player = PhysicalReplay(
         library,
         publish=bridge.publish_command,
@@ -161,7 +183,39 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
         driver_alive=lambda: (bridge.driver_alive()
                               if hasattr(bridge, "driver_alive") else False),
     )
+    catalog = CollectionCatalog(collection_root)
+
+    if recorder_factory is None:
+        from elrobot.nodes.episode_recorder import Recorder
+
+        recorder_factory = Recorder
+    manager = CollectionManager(
+        catalog,
+        recorder_factory,
+        add_node=getattr(bridge, "add_node", lambda node: None),
+        remove_node=getattr(bridge, "remove_node", lambda node: None),
+        external_recorder_alive=getattr(
+            bridge, "external_recorder_alive", lambda: False),
+        dataset_validator=dataset_validator,
+    )
+
+    @asynccontextmanager
+    async def lifespan(app):
+        yield
+        manager.shutdown()
+
+    app = FastAPI(title="elrobot cockpit", lifespan=lifespan)
+    app.state.bridge = bridge
+    app.state.library = library
     app.state.player = player
+    app.state.catalog = catalog
+    app.state.collection = manager
+
+    def collection_call(command, *args, **kwargs):
+        try:
+            return command(*args, **kwargs)
+        except (CatalogError, CollectionError) as exc:
+            raise HTTPException(exc.code, exc.detail) from exc
 
     def driver_ready() -> bool:
         return bool(
@@ -261,8 +315,79 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
         cmd = body.get("cmd")
         if cmd not in ("start", "stop", "discard"):
             raise HTTPException(400, "cmd must be start, stop, or discard")
-        bridge.publish_record_cmd(cmd)
-        return {"sent": cmd}
+        state = manager.snapshot()
+        if state["session_id"] is None:
+            raise HTTPException(409, "start a collection session first")
+        if cmd == "start":
+            return collection_call(
+                manager.start_episode, state["task_id"])
+        if cmd == "stop":
+            return collection_call(manager.stop_episode)
+        return collection_call(manager.discard_episode)
+
+    # ---- managed collection -------------------------------------------
+
+    @app.get("/api/tasks")
+    def tasks(include_archived: bool = True):
+        return {"tasks": catalog.tasks(include_archived)}
+
+    @app.post("/api/tasks")
+    def task_create(body: dict):
+        return collection_call(
+            catalog.create_task,
+            body.get("name", ""),
+            body.get("instruction", ""),
+        )
+
+    @app.patch("/api/tasks/{task_id}")
+    def task_update(task_id: str, body: dict):
+        fields = {
+            key: body[key]
+            for key in ("name", "instruction", "archived")
+            if key in body
+        }
+        return collection_call(catalog.update_task, task_id, **fields)
+
+    @app.get("/api/collection")
+    def collection_state():
+        return manager.snapshot()
+
+    @app.post("/api/collection/session/start")
+    def collection_session_start(body: dict):
+        return collection_call(
+            manager.start_session,
+            body.get("task_id", ""),
+            body.get("name", ""),
+        )
+
+    @app.post("/api/collection/episode/start")
+    def collection_episode_start(body: dict):
+        return collection_call(
+            manager.start_episode, body.get("task_id", ""))
+
+    @app.post("/api/collection/episode/stop")
+    def collection_episode_stop():
+        return collection_call(manager.stop_episode)
+
+    @app.post("/api/collection/episode/discard")
+    def collection_episode_discard():
+        return collection_call(manager.discard_episode)
+
+    @app.post("/api/collection/session/finish")
+    def collection_session_finish():
+        return collection_call(manager.finish_session)
+
+    @app.get("/api/collection/recovery")
+    def collection_recovery():
+        return {"sessions": manager.recoveries()}
+
+    @app.post("/api/collection/recovery/{session_id}/finish")
+    def collection_recovery_finish(session_id: str):
+        return collection_call(manager.recover_finish, session_id)
+
+    @app.post("/api/collection/recovery/{session_id}/archive")
+    def collection_recovery_archive(session_id: str):
+        return collection_call(manager.recover_archive, session_id)
 
     # ---- replay: read recorded episodes back, VISUAL ONLY ----------------
     # Nothing here publishes to /joint_command. Re-executing an episode on
@@ -380,6 +505,7 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
                     "commanders": bridge.commanders(),
                     "driver_alive": alive,
                     "record": bridge.record_status_fresh(),
+                    "collection": manager.snapshot(),
                     "replay": player.status(),
                     # per-connection: is THIS tab the one allowed to command?
                     "is_owner": bool(clients) and clients[0] is sock,

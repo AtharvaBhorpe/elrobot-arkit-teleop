@@ -46,6 +46,81 @@ class FakeBridge:
         return srv.WebBridge.record_status_fresh(self)
 
 
+class FakeManagedRecorder:
+    def __init__(self, args):
+        self.args = args
+        self.recording = False
+        self.episodes = 0
+
+    def set_task(self, instruction):
+        self.args.task = instruction
+
+    def start(self):
+        self.recording = True
+        return True
+
+    def stop(self):
+        self.recording = False
+        self.episodes += 1
+        return 12
+
+    def discard(self):
+        self.recording = False
+
+    def close(self):
+        pass
+
+
+def _collection_client():
+    root = Path(tempfile.mkdtemp()) / "collections"
+    made = []
+
+    def recorder_factory(args):
+        recorder = FakeManagedRecorder(args)
+        made.append(recorder)
+        return recorder
+
+    def validator(session, finalize):
+        count = made[0].episodes if made else 0
+        return {"count": count, "lengths": [12] * count}
+
+    app = create_app(
+        FakeBridge(),
+        collection_root=root,
+        recorder_factory=recorder_factory,
+        dataset_validator=validator,
+    )
+    return TestClient(app), made
+
+
+def test_task_and_collection_api():
+    c, made = _collection_client()
+    task = c.post("/api/tasks", json={
+        "name": "Pick red cube",
+        "instruction": "Pick up the red cube.",
+    }).json()
+    assert c.get("/api/tasks").json()["tasks"][0]["id"] == task["id"]
+    assert c.post("/api/collection/session/start", json={
+        "task_id": task["id"], "name": "morning",
+    }).json()["state"] == "ready"
+    assert c.post("/api/collection/episode/start", json={
+        "task_id": task["id"],
+    }).json()["state"] == "recording"
+    assert c.post("/api/collection/episode/stop").json()["state"] == "ready"
+    assert c.post("/api/collection/session/finish").json()["state"] == "idle"
+    assert made[0].episodes == 1
+
+
+def test_collection_api_errors_and_websocket_state():
+    c, _ = _collection_client()
+    assert c.post("/api/collection/episode/stop").status_code == 409
+    assert c.post("/api/tasks", json={
+        "name": "", "instruction": "Pick.",
+    }).status_code == 422
+    with c.websocket_connect("/ws") as ws:
+        assert "collection" in ws.receive_json()
+
+
 def test_status_reports_joints_and_flags():
     app = create_app(FakeBridge())
     c = TestClient(app)
@@ -657,17 +732,20 @@ def test_replay_survives_a_missing_dataset():
     assert r.json()["episodes"] == []
 
 
-def test_record_relays_valid_commands_only():
+def test_legacy_record_requires_active_session():
     b = FakeBridge()
     c = TestClient(create_app(b))
     r = c.post("/api/record", json={"cmd": "start"})
-    assert r.status_code == 200 and b.record_cmds == ["start"]
+    assert r.status_code == 409
+    assert b.record_cmds == []
     r = c.post("/api/record", json={"cmd": "bogus"})
     assert r.status_code == 400
-    assert b.record_cmds == ["start"]                  # bogus cmd never relayed
+    assert b.record_cmds == []
 
 
 if __name__ == "__main__":
+    test_task_and_collection_api()
+    test_collection_api_errors_and_websocket_state()
     test_status_reports_joints_and_flags()
     test_control_toggle_and_seed()
     test_control_requires_fresh_driver_state()
@@ -701,5 +779,5 @@ if __name__ == "__main__":
     test_physical_replay_caps_speed()
     test_physical_replay_seeks_start_then_streams_and_stops()
     test_replay_survives_a_missing_dataset()
-    test_record_relays_valid_commands_only()
+    test_legacy_record_requires_active_session()
     print("WEB API TESTS PASSED")
