@@ -9,13 +9,20 @@
 <body>
   <header>
     <div class="brand">Elrobot Cockpit</div>
+    <nav class="mode-switch" role="tablist" aria-label="Cockpit mode">
+      <button id="mode-teleop" type="button" role="tab"
+              aria-selected="true" aria-controls="workspace">Teleop</button>
+      <button id="mode-curate" type="button" role="tab"
+              aria-selected="false" aria-controls="workspace"
+              tabindex="-1">Curate</button>
+    </nav>
     <div class="pills">
       <div class="pill" id="pill-driver" aria-live="polite">
-        <div class="dot warn"></div>
+        <span class="dot warn"></span>
         <span>driver unknown</span>
       </div>
       <div class="pill" id="pill-age" aria-live="polite">
-        <div class="dot warn"></div>
+        <span class="dot warn"></span>
         <span>state unknown</span>
       </div>
     </div>
@@ -29,12 +36,23 @@
     </div>
   </header>
 
-  <div id="banner" role="alert">Another commander is also live (phone/jog) — web control
-    is NOT disabled, both command streams are being sent</div>
+  <div id="banner" role="alert">Another commander is also live (phone/jog).</div>
 
-  <main>
+  <main id="workspace" data-mode="teleop">
+    <aside class="curate-left card" aria-label="Curation browser">
+      <div class="sidebar-heading">
+        <div>
+          <p class="eyebrow">Dataset workspace</p>
+          <h2>Episodes</h2>
+        </div>
+        <button id="curate-refresh" type="button" class="compact">Refresh</button>
+      </div>
+      <div id="curate-task-list" class="task-groups" aria-label="Task groups"></div>
+      <div id="curate-episode-list" class="episode-list"
+           aria-label="Episodes" aria-live="polite"></div>
+    </aside>
+
     <div class="stage">
-      <!-- Always visible: both cameras side by side above the 3D view -->
       <div class="cams">
         <div class="card cam-card">
           <div class="cam-frame">
@@ -46,136 +64,247 @@
           <div class="cam-frame">
             <img id="cam-ext" alt="External camera feed">
           </div>
-          <div class="cam-label">ext</div>
+          <div class="cam-label">external</div>
         </div>
       </div>
-
       <div class="card viewer">
         <div id="scene3d"></div>
       </div>
-    </div><!-- /.stage -->
+    </div>
 
-    <!-- Middle column: one operator workflow at a time -->
     <div class="deck">
       <div class="toggles" role="tablist" aria-label="Operator workflow">
         <button id="tab-calibrate" role="tab" aria-selected="false"
                 aria-controls="panel-calibrate" tabindex="-1">Calibrate</button>
-        <button id="tab-replay" role="tab" aria-selected="true"
-                aria-controls="panel-replay">Replay</button>
+        <button id="tab-collect" role="tab" aria-selected="true"
+                aria-controls="panel-collect">Collect</button>
       </div>
 
-    <div class="panel" id="panel-calibrate" role="tabpanel"
-         aria-labelledby="tab-calibrate" hidden>
-      <div class="card" style="padding: 14px;">
-        <p id="calib-status" class="muted" style="margin: 0 0 6px;">idle</p>
-        <p id="calib-backup" class="muted" style="margin: 0 0 12px; font-size: 12px;
-           display: none;"></p>
-        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;">
-          <button id="calib-start">Start preflight</button>
-          <button id="calib-sweep-begin" disabled>Begin sweep</button>
-          <button id="calib-sweep-end" disabled>End sweep</button>
-          <button id="calib-eeprom-open" disabled>Write EEPROM…</button>
-          <button id="calib-finish" disabled>Finish</button>
-          <button id="calib-abort" class="danger">Abort</button>
+      <section class="panel" id="panel-calibrate" role="tabpanel"
+               aria-labelledby="tab-calibrate" hidden>
+        <div class="card panel-card">
+          <p id="calib-status" class="muted">idle</p>
+          <p id="calib-backup" class="muted hidden-note"></p>
+          <div class="button-row">
+            <button id="calib-start">Start preflight</button>
+            <button id="calib-sweep-begin" disabled>Begin sweep</button>
+            <button id="calib-sweep-end" disabled>End sweep</button>
+            <button id="calib-eeprom-open" disabled>Write EEPROM…</button>
+            <button id="calib-finish" disabled>Finish</button>
+            <button id="calib-abort" class="danger">Abort</button>
+          </div>
+          <div id="calib-signs" class="hidden-note">
+            <p class="muted">Flip a sign if the model moved opposite the real joint.</p>
+            <div id="calib-sign-rows" class="button-row"></div>
+          </div>
+          <pre id="calib-gate" class="muted status-pre"></pre>
         </div>
-        <div id="calib-signs" style="display: none; margin-bottom: 12px;">
-          <p class="muted" style="margin: 0 0 6px;">Sign check - flip if the model
-            moved opposite the real joint:</p>
-          <div id="calib-sign-rows" style="display: flex; flex-wrap: wrap; gap: 6px;"></div>
-        </div>
-        <pre id="calib-gate" class="muted"
-             style="margin: 0; font-size: 12px; white-space: pre-wrap;"></pre>
-      </div>
+      </section>
 
-      <dialog id="calib-eeprom-dialog" style="border: 1px solid var(--border);
-              border-radius: calc(var(--radius) + 4px); padding: 20px; max-width: 420px;">
-        <p style="margin: 0 0 8px; font-weight: 600;">Write homing offsets to EEPROM</p>
-        <p class="muted" style="margin: 0 0 12px; font-size: 13px;">
-          This writes to the servos and invalidates the current table. There is
-          no partial redo - type ERASE to confirm.</p>
-        <p id="calib-eeprom-backup" class="muted" style="margin: 0 0 12px;
-           font-size: 12px;"></p>
-        <input id="calib-eeprom-input" type="text" placeholder="ERASE"
-               style="width: 100%; padding: 8px; border: 1px solid var(--border);
-                      border-radius: var(--radius); margin-bottom: 12px;
-                      background: var(--background); color: var(--foreground);">
-        <div style="display: flex; gap: 8px; justify-content: flex-end;">
-          <button id="calib-eeprom-cancel">Cancel</button>
-          <button id="calib-eeprom-confirm" class="primary" disabled>Write EEPROM</button>
+      <section class="panel" id="panel-collect" role="tabpanel"
+               aria-labelledby="tab-collect">
+        <div class="card panel-card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Teleoperation capture</p>
+              <h2>Collection session</h2>
+            </div>
+            <span id="collection-state" class="state-badge"
+                  aria-live="polite">idle</span>
+          </div>
+
+          <label for="task-select">Episode task</label>
+          <div class="field-action">
+            <select id="task-select"></select>
+            <button id="task-edit" type="button" class="compact">Edit</button>
+          </div>
+          <button id="task-create-open" type="button" class="text-button">
+            + Create a saved task
+          </button>
+
+          <label for="session-name">Session name <span class="muted">(optional)</span></label>
+          <input id="session-name" type="text" placeholder="morning bench run">
+          <button id="session-start" type="button" class="primary full">
+            Start collection
+          </button>
+
+          <div class="collection-actions">
+            <button id="episode-start" type="button" class="primary" disabled>
+              Record episode
+            </button>
+            <button id="episode-stop" type="button" disabled>Stop &amp; keep</button>
+            <button id="episode-discard" type="button" class="danger" disabled>
+              Discard
+            </button>
+            <button id="session-finish" type="button" disabled>Finish session</button>
+          </div>
+          <p id="collection-status" class="muted" aria-live="polite">
+            Choose a task, then start a collection session.
+          </p>
         </div>
-      </dialog>
+
+        <div class="card panel-card recovery-card">
+          <div class="section-heading">
+            <h3>Interrupted sessions</h3>
+            <button id="recovery-refresh" type="button" class="compact">Check</button>
+          </div>
+          <div id="recovery-list" class="muted" aria-live="polite">
+            No recovery check yet.
+          </div>
+        </div>
+      </section>
     </div>
-    <div class="panel" id="panel-replay" role="tabpanel"
-         aria-labelledby="tab-replay">
-      <div class="card" style="padding: 14px;">
-        <div style="display: flex; align-items: baseline; gap: 8px;">
-          <span style="font-size: 26px; font-weight: 600;" id="record-count">0</span>
-          <span class="muted">episodes</span>
+
+    <aside class="curate-right card" aria-label="Episode review">
+      <div class="sidebar-heading">
+        <div>
+          <p class="eyebrow">Selected take</p>
+          <h2 id="curate-title">No episode selected</h2>
         </div>
-        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px;">
-          <button id="record-start" class="primary">Start episode</button>
-          <button id="record-stop" disabled>Stop &amp; keep</button>
-          <button id="record-discard" disabled>Discard</button>
-        </div>
-        <div class="muted" id="record-frames" style="margin-top: 8px;"></div>
+        <span id="curate-review-state" class="state-badge">—</span>
       </div>
 
-      <div class="card" style="padding: 14px; margin-top: 10px;">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <strong style="font-size: 13px;">Replay</strong>
-          <span class="muted" style="font-size: 12px;">visual only — the arm
-            is not moved</span>
-        </div>
-        <select id="replay-select" style="width: 100%; margin-top: 10px;
-                padding: 7px; border: 1px solid var(--border);
-                border-radius: var(--radius); background: var(--background);
-                color: var(--foreground);">
-          <option value="">— no episodes —</option>
-        </select>
-        <div style="display: flex; gap: 8px; margin-top: 8px; align-items: center;">
-          <button id="replay-play" disabled>Play</button>
-          <button id="replay-stop" disabled>Stop</button>
-          <button id="replay-refresh">Refresh</button>
-        </div>
-        <input id="replay-scrub" type="range" min="0" max="0" value="0"
-               step="1" disabled style="width: 100%; margin-top: 10px;">
-        <div class="muted" id="replay-status" style="margin-top: 4px;
-             font-size: 12px;">Pick an episode to watch it back.</div>
-
-        <hr style="border: 0; border-top: 1px solid var(--border);
-                   margin: 12px 0;">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <strong style="font-size: 13px;">On the real arm</strong>
-        </div>
-        <p class="muted" style="margin: 6px 0 8px; font-size: 12px;">
-          Re-runs the recorded commands. <b>The arm moves on its own.</b>
-          Stand clear, keep a hand near the driver's terminal, and stop the
-          phone/slider commander first.</p>
-        <div style="display: flex; gap: 8px; align-items: center;
-                    flex-wrap: wrap;">
-          <button id="phys-arm" class="danger">Arm</button>
-          <button id="phys-play" disabled>Run on arm</button>
-          <button id="phys-stop" class="danger" disabled>STOP</button>
-          <label class="muted" style="font-size: 12px;">speed
-            <input id="phys-speed" type="number" min="0.1" max="1.0"
-                   step="0.1" value="0.6"
-                   style="width: 62px; margin-left: 4px; padding: 4px;
-                          border: 1px solid var(--border);
-                          border-radius: var(--radius);
-                          background: var(--background);
-                          color: var(--foreground);"></label>
-        </div>
-        <div class="muted" id="phys-status" style="margin-top: 6px;
-             font-size: 12px;">disarmed</div>
+      <div id="curate-empty" class="empty-state">
+        Choose a task group and episode to inspect it.
       </div>
-    </div>
-    </div><!-- /.deck -->
+      <div id="curate-controls" hidden>
+        <p id="curate-meta" class="muted"></p>
+        <div class="review-actions" aria-label="Review decision">
+          <button id="curate-keep" type="button">Keep</button>
+          <button id="curate-reject" type="button" class="danger">Reject</button>
+          <button id="curate-unreview" type="button">Unreview</button>
+        </div>
 
-    <div class="card rail">
-      <h3 class="rail-title">Joints</h3>
+        <label for="curate-task">Effective task</label>
+        <select id="curate-task"></select>
+
+        <div class="trim-grid">
+          <label for="curate-trim-start">Trim start
+            <input id="curate-trim-start" type="number" min="0">
+          </label>
+          <label for="curate-trim-end">Trim end <span class="muted">(exclusive)</span>
+            <input id="curate-trim-end" type="number" min="1">
+          </label>
+        </div>
+        <div class="button-row">
+          <button id="curate-trim-apply" type="button">Apply trim</button>
+          <button id="curate-trim-reset" type="button">Use full take</button>
+        </div>
+
+        <label class="check-row" for="curate-view-raw">
+          <input id="curate-view-raw" type="checkbox">
+          View untouched raw episode
+        </label>
+
+        <label for="curate-notes">Notes</label>
+        <textarea id="curate-notes" rows="3"
+                  placeholder="Why this take is useful or flawed"></textarea>
+        <button id="curate-notes-save" type="button">Save notes</button>
+
+        <div class="review-player">
+          <div class="section-heading">
+            <h3>Replay</h3>
+            <span class="muted">visual only</span>
+          </div>
+          <input id="replay-scrub" type="range" min="0" max="0"
+                 value="0" step="1" disabled>
+          <div class="button-row">
+            <button id="replay-play" type="button" disabled>Play</button>
+            <button id="replay-stop" type="button" disabled>Reset</button>
+          </div>
+          <p id="replay-status" class="muted" aria-live="polite">
+            Select an episode.
+          </p>
+        </div>
+
+        <div class="physical-replay">
+          <h3>On the real arm</h3>
+          <p class="muted">Re-runs recorded commands autonomously. Stand clear.</p>
+          <div class="button-row">
+            <button id="phys-arm" type="button" class="danger">Arm</button>
+            <button id="phys-play" type="button" disabled>Run on arm</button>
+            <button id="phys-stop" type="button" class="danger" disabled>STOP</button>
+          </div>
+          <label for="phys-speed">Replay speed
+            <input id="phys-speed" type="number" min="0.1" max="1"
+                   step="0.1" value="0.6">
+          </label>
+          <p id="phys-status" class="muted" aria-live="polite">disarmed</p>
+        </div>
+
+        <button id="export-open" type="button" class="primary full">
+          Export kept episodes…
+        </button>
+      </div>
+    </aside>
+
+    <aside class="card rail" aria-label="Joint controls">
+      <h2 class="rail-title">Joints</h2>
       <div id="joints"></div>
-    </div>
+    </aside>
   </main>
+
+  <dialog id="calib-eeprom-dialog" class="modal">
+    <form method="dialog">
+      <h2>Write homing offsets to EEPROM</h2>
+      <p class="muted">This writes to the servos and invalidates the current table.
+        Type ERASE to confirm.</p>
+      <p id="calib-eeprom-backup" class="muted"></p>
+      <label for="calib-eeprom-input">Confirmation</label>
+      <input id="calib-eeprom-input" type="text" placeholder="ERASE">
+      <div class="dialog-actions">
+        <button id="calib-eeprom-cancel" value="cancel">Cancel</button>
+        <button id="calib-eeprom-confirm" type="button" class="primary" disabled>
+          Write EEPROM
+        </button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="task-dialog" class="modal">
+    <form method="dialog">
+      <h2 id="task-dialog-title">Create task</h2>
+      <label for="task-name">Task name</label>
+      <input id="task-name" type="text" placeholder="Pick red cube">
+      <label for="task-instruction">Training instruction</label>
+      <textarea id="task-instruction" rows="4"
+                placeholder="Pick up the red cube and place it in the tray."></textarea>
+      <p id="task-dialog-status" class="muted" aria-live="polite"></p>
+      <div class="dialog-actions split">
+        <button id="task-archive" type="button" class="danger" hidden>Archive</button>
+        <span class="spacer"></span>
+        <button id="task-dialog-cancel" value="cancel">Cancel</button>
+        <button id="task-save" type="button" class="primary">Save task</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="export-dialog" class="modal export-modal">
+    <form method="dialog">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">LeRobot v3</p>
+          <h2>Export curated dataset</h2>
+        </div>
+        <button id="export-close" value="cancel" class="compact">Close</button>
+      </div>
+      <label for="export-name">Dataset name</label>
+      <input id="export-name" type="text" value="training">
+      <fieldset>
+        <legend>Task groups</legend>
+        <div id="export-task-list"></div>
+      </fieldset>
+      <button id="export-preview" type="button">Validate selection</button>
+      <div id="export-summary" class="export-summary muted" aria-live="polite">
+        Select tasks and validate before export.
+      </div>
+      <div class="dialog-actions">
+        <button id="export-start" type="button" class="primary" disabled>
+          Start export
+        </button>
+      </div>
+    </form>
+  </dialog>
 
   <script type="importmap">
     {"imports": {

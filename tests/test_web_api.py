@@ -651,6 +651,12 @@ def test_curated_physical_replay_publishes_trimmed_actions():
     c.post("/api/replay/stop")
     assert bridge.published
 
+    assert c.patch(
+        f"/api/curation/episodes/{session['id']}/0",
+        json={"notes": "reviewed"},
+    ).status_code == 200
+    assert c.get("/api/replay/status").json()["armed"] is False
+
 
 def test_export_api_previews_starts_and_reports_status():
     class FakeExports:
@@ -688,6 +694,22 @@ def test_export_api_previews_starts_and_reports_status():
     assert started["id"] == "export_test"
     assert c.get("/api/exports/export_test").json()["state"] == "complete"
     assert c.get("/api/exports/missing").status_code == 422
+
+
+def test_collection_and_curate_shell_is_served():
+    c = TestClient(create_app(
+        FakeBridge(),
+        collection_root=Path(tempfile.mkdtemp()) / "collections",
+    ))
+    html = c.get("/").text
+    for element_id in (
+        "mode-teleop", "mode-curate", "task-select", "session-start",
+        "episode-start", "session-finish", "curate-task-list",
+        "curate-episode-list", "curate-keep", "curate-reject",
+        "curate-trim-start", "curate-trim-end", "curate-view-raw",
+        "export-open",
+    ):
+        assert f'id="{element_id}"' in html
 
 
 def test_replay_lists_and_serves_recorded_episodes():
@@ -904,6 +926,7 @@ if __name__ == "__main__":
     test_physical_replay_accepts_stable_episode_reference()
     test_curated_physical_replay_publishes_trimmed_actions()
     test_export_api_previews_starts_and_reports_status()
+    test_collection_and_curate_shell_is_served()
     test_replay_lists_and_serves_recorded_episodes()
     test_replay_never_commands_the_arm()
     test_replay_reports_a_recorder_still_writing()

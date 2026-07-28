@@ -111,7 +111,7 @@ function connect() {
         rows[n].inp.value = m.joints[n];
         rows[n].out.textContent = m.joints[n].toFixed(2);
       }
-    renderRecord(m.record);
+    renderCollection(m.collection, m.record);
     renderPhys(m.replay);        // live arm/seek/play progress
   };
   ws.onclose = () => { setControlUi(false); setTimeout(connect, 1000); };
@@ -336,51 +336,278 @@ calibEl.eepromConfirm.addEventListener("click", async () => {
 refreshCalib();
 setInterval(refreshCalib, 2000);
 
-// ── record panel ───────────────────────────────────────────────────────
-// Status comes from the WS "record" field (relayed from /record/status by
-// the backend); buttons just POST /api/record and let the next WS tick
-// reconcile the UI - no separate polling needed.
+// ── shared JSON helper ─────────────────────────────────────────────────
 
-const recordEl = {
-  count: document.getElementById("record-count"),
-  frames: document.getElementById("record-frames"),
-  start: document.getElementById("record-start"),
-  stop: document.getElementById("record-stop"),
-  discard: document.getElementById("record-discard"),
+async function request(path, options = {}) {
+  const response = await fetch(path, options);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok)
+    throw new Error(data.detail || `${path} failed (${response.status})`);
+  return data;
+}
+
+function jsonRequest(path, method, body) {
+  return request(path, {
+    method,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  });
+}
+
+// ── top-level Teleop / Curate modes ────────────────────────────────────
+
+const workspace = document.getElementById("workspace");
+const modeTabs = [
+  document.getElementById("mode-teleop"),
+  document.getElementById("mode-curate"),
+];
+
+async function selectMode(mode) {
+  await safeStopPhysical();
+  stopReplay();
+  replay.active = false;
+  replay.states = null;
+  workspace.dataset.mode = mode;
+  for (const tab of modeTabs) {
+    const active = tab.id === `mode-${mode}`;
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+  }
+  if (mode === "curate") {
+    if (document.body.hasAttribute("data-control")) await setControl(false);
+    await refreshCurate();
+  }
+}
+
+modeTabs.forEach((tab, index) => {
+  tab.addEventListener("click", () => selectMode(tab.id.replace("mode-", "")));
+  tab.addEventListener("keydown", (event) => {
+    const step = event.key === "ArrowRight" ? 1
+      : event.key === "ArrowLeft" ? -1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const next = modeTabs[(index + step + modeTabs.length) % modeTabs.length];
+    selectMode(next.id.replace("mode-", ""));
+    next.focus();
+  });
+});
+
+// ── task library and managed collection ───────────────────────────────
+
+let tasks = [];
+let collectionSnapshot = { state: "idle" };
+const collectionEl = {
+  task: document.getElementById("task-select"),
+  taskEdit: document.getElementById("task-edit"),
+  sessionName: document.getElementById("session-name"),
+  sessionStart: document.getElementById("session-start"),
+  episodeStart: document.getElementById("episode-start"),
+  episodeStop: document.getElementById("episode-stop"),
+  episodeDiscard: document.getElementById("episode-discard"),
+  sessionFinish: document.getElementById("session-finish"),
+  taskCreate: document.getElementById("task-create-open"),
+  state: document.getElementById("collection-state"),
+  status: document.getElementById("collection-status"),
 };
 
-function renderRecord(status) {
-  // status is null until a /record/status message arrives, i.e. until the
-  // recorder node is actually running. Say so plainly and disable the
-  // buttons: POST /api/record would happily return 200 (the web backend
-  // publishes /record/cmd fine) while nothing at all is listening, which
-  // looks exactly like a broken Start button.
-  const online = !!status;
-  const recording = !!(status && status.recording);
-  recordEl.count.textContent = online ? status.episodes : "--";
-  recordEl.start.disabled = !online || recording;
-  recordEl.stop.disabled = !online || !recording;
-  recordEl.discard.disabled = !online || !recording;
-  recordEl.frames.textContent = !online
-    ? "recorder not running - start it in its own terminal: pixi run record"
-    : (recording ? `recording - ${status.frames} frames` : "");
+function taskById(id) {
+  return tasks.find((task) => task.id === id);
 }
-renderRecord(null);
 
-function recordCmd(cmd) {
-  fetch("/api/record", { method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ cmd }) }).catch(() => {});
+function fillTaskSelect(select, value, includeArchived = false) {
+  select.innerHTML = "";
+  for (const task of tasks) {
+    if (task.archived && !includeArchived && task.id !== value) continue;
+    const option = document.createElement("option");
+    option.value = task.id;
+    option.textContent = task.name + (task.archived ? " (archived)" : "");
+    select.appendChild(option);
+  }
+  if (value && [...select.options].some((option) => option.value === value))
+    select.value = value;
 }
-recordEl.start.addEventListener("click", () => recordCmd("start"));
-recordEl.stop.addEventListener("click", () => recordCmd("stop"));
-recordEl.discard.addEventListener("click", () => recordCmd("discard"));
+
+async function refreshTasks() {
+  const current = collectionEl.task.value;
+  tasks = (await request("/api/tasks")).tasks ?? [];
+  fillTaskSelect(collectionEl.task, current || collectionSnapshot.task_id);
+  collectionEl.taskEdit.disabled = !collectionEl.task.value
+    || collectionSnapshot.state === "recording";
+}
+
+function renderCollection(snapshot, recorder) {
+  if (!snapshot) return;
+  collectionSnapshot = snapshot;
+  const ready = snapshot.state === "ready";
+  const recording = snapshot.state === "recording";
+  collectionEl.state.textContent = snapshot.state;
+  collectionEl.sessionStart.disabled = snapshot.state !== "idle"
+    || !collectionEl.task.value;
+  collectionEl.episodeStart.disabled = !ready;
+  collectionEl.episodeStop.disabled = !recording;
+  collectionEl.episodeDiscard.disabled = !recording;
+  collectionEl.sessionFinish.disabled = !ready;
+  collectionEl.task.disabled = recording;
+  collectionEl.taskEdit.disabled = recording || !collectionEl.task.value;
+  collectionEl.taskCreate.disabled = recording;
+  collectionEl.sessionName.disabled = snapshot.state !== "idle";
+  const task = taskById(snapshot.task_id);
+  const frameText = recording && recorder
+    ? ` · ${recorder.frames ?? 0} frames accepted` : "";
+  collectionEl.status.textContent = snapshot.error
+    || (recording
+      ? `Recording ${task?.name ?? "episode"}${frameText}`
+      : ready
+        ? "Session ready. Choose a task and record the next episode."
+        : snapshot.state === "finalizing"
+          ? "Finalizing and validating the raw dataset…"
+          : "Choose a task, then start a collection session.");
+  collectionEl.status.classList.toggle("err", !!snapshot.error);
+}
+
+async function collectionAction(path, body) {
+  collectionEl.status.classList.remove("err");
+  try {
+    const snapshot = await jsonRequest(path, "POST", body);
+    renderCollection(snapshot);
+    return snapshot;
+  } catch (error) {
+    collectionEl.status.textContent = error.message;
+    collectionEl.status.classList.add("err");
+    return null;
+  }
+}
+
+collectionEl.sessionStart.addEventListener("click", () => collectionAction(
+  "/api/collection/session/start",
+  { task_id: collectionEl.task.value, name: collectionEl.sessionName.value },
+));
+collectionEl.episodeStart.addEventListener("click", () => collectionAction(
+  "/api/collection/episode/start", { task_id: collectionEl.task.value },
+));
+collectionEl.episodeStop.addEventListener("click", () => collectionAction(
+  "/api/collection/episode/stop",
+));
+collectionEl.episodeDiscard.addEventListener("click", () => collectionAction(
+  "/api/collection/episode/discard",
+));
+collectionEl.sessionFinish.addEventListener("click", async () => {
+  const done = await collectionAction("/api/collection/session/finish");
+  if (done) {
+    collectionEl.sessionName.value = "";
+    refreshCurate();
+  }
+});
+collectionEl.task.addEventListener("change", () => renderCollection(
+  collectionSnapshot,
+));
+
+const taskDialog = {
+  root: document.getElementById("task-dialog"),
+  title: document.getElementById("task-dialog-title"),
+  name: document.getElementById("task-name"),
+  instruction: document.getElementById("task-instruction"),
+  status: document.getElementById("task-dialog-status"),
+  archive: document.getElementById("task-archive"),
+  save: document.getElementById("task-save"),
+  editing: null,
+};
+
+function openTaskDialog(task = null) {
+  taskDialog.editing = task;
+  taskDialog.title.textContent = task ? "Edit task" : "Create task";
+  taskDialog.name.value = task?.name ?? "";
+  taskDialog.instruction.value = task?.instruction ?? "";
+  taskDialog.status.textContent = "";
+  taskDialog.archive.hidden = !task;
+  taskDialog.archive.textContent = task?.archived ? "Restore" : "Archive";
+  taskDialog.root.showModal();
+  taskDialog.name.focus();
+}
+
+document.getElementById("task-create-open").addEventListener(
+  "click", () => openTaskDialog());
+collectionEl.taskEdit.addEventListener(
+  "click", () => openTaskDialog(taskById(collectionEl.task.value)));
+taskDialog.save.addEventListener("click", async () => {
+  try {
+    const body = {
+      name: taskDialog.name.value,
+      instruction: taskDialog.instruction.value,
+    };
+    if (taskDialog.editing)
+      await jsonRequest(`/api/tasks/${taskDialog.editing.id}`, "PATCH", body);
+    else
+      await jsonRequest("/api/tasks", "POST", body);
+    taskDialog.root.close();
+    await refreshTasks();
+    await refreshCurate();
+  } catch (error) {
+    taskDialog.status.textContent = error.message;
+    taskDialog.status.classList.add("err");
+  }
+});
+taskDialog.archive.addEventListener("click", async () => {
+  if (!taskDialog.editing) return;
+  try {
+    await jsonRequest(`/api/tasks/${taskDialog.editing.id}`, "PATCH", {
+      archived: !taskDialog.editing.archived,
+    });
+    taskDialog.root.close();
+    await refreshTasks();
+    await refreshCurate();
+  } catch (error) {
+    taskDialog.status.textContent = error.message;
+    taskDialog.status.classList.add("err");
+  }
+});
+
+async function refreshRecoveries() {
+  const list = document.getElementById("recovery-list");
+  try {
+    const sessions = (await request("/api/collection/recovery")).sessions ?? [];
+    list.innerHTML = sessions.length ? "" : "No interrupted sessions.";
+    for (const session of sessions) {
+      const item = document.createElement("div");
+      item.className = "recovery-item";
+      const label = document.createElement("p");
+      label.textContent = session.name || session.id;
+      const actions = document.createElement("div");
+      actions.className = "button-row";
+      for (const [text, action] of [
+        ["Recover & finish", "finish"],
+        ["Archive incomplete", "archive"],
+      ]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "compact";
+        button.textContent = text;
+        button.addEventListener("click", async () => {
+          try {
+            await jsonRequest(
+              `/api/collection/recovery/${session.id}/${action}`, "POST");
+            await refreshRecoveries();
+            await refreshCurate();
+          } catch (error) {
+            list.textContent = error.message;
+            list.classList.add("err");
+          }
+        });
+        actions.appendChild(button);
+      }
+      item.append(label, actions);
+      list.appendChild(item);
+    }
+  } catch (error) {
+    list.textContent = error.message;
+    list.classList.add("err");
+  }
+}
+document.getElementById("recovery-refresh").addEventListener(
+  "click", refreshRecoveries);
 
 // ── camera polling ────────────────────────────────────────────────────
-// Not <img src="/cam/x"> (multipart/x-mixed-replace): recent Chromium
-// versions unreliably paint that inside <img> - confirmed live (correct
-// headers/framing, real data transferring, image never visually updating).
-// fetch() + Blob + createObjectURL works the same in every browser.
+// Live fetches pause while a recorded take owns the shared camera panels.
 
 function pollCamera(name) {
   const img = document.getElementById(`cam-${name}`);
@@ -393,10 +620,10 @@ function pollCamera(name) {
       const blob = await fetch(`/cam/${name}/frame`).then((r) => r.blob());
       const url = URL.createObjectURL(blob);
       img.src = url;
-      if (lastUrl) URL.revokeObjectURL(lastUrl);   // don't leak object URLs
+      if (lastUrl) URL.revokeObjectURL(lastUrl);
       lastUrl = url;
     } catch {
-      // transient fetch failure - next tick retries, no need to surface it
+      // A transient camera miss is retried on the next tick.
     } finally {
       busy = false;
     }
@@ -407,148 +634,323 @@ function pollCamera(name) {
 pollCamera("wrist");
 pollCamera("ext");
 
-// ── episode replay (visual only) ───────────────────────────────────────
-// Plays a recorded episode back through the same 3D view and camera panels
-// used for live data. Nothing is ever sent to /joint_command from here - the
-// arm does not move. Re-executing an episode on hardware is a separate,
-// deliberately-not-built feature (see replay.py).
+// ── curation browser and visual replay ─────────────────────────────────
+
+let curateSessions = [];
+let curateEpisodes = [];
+let curateTaskId = null;
+let selectedEpisode = null;
+let selectionToken = 0;
+
+const curateEl = {
+  taskList: document.getElementById("curate-task-list"),
+  episodeList: document.getElementById("curate-episode-list"),
+  title: document.getElementById("curate-title"),
+  review: document.getElementById("curate-review-state"),
+  empty: document.getElementById("curate-empty"),
+  controls: document.getElementById("curate-controls"),
+  meta: document.getElementById("curate-meta"),
+  task: document.getElementById("curate-task"),
+  trimStart: document.getElementById("curate-trim-start"),
+  trimEnd: document.getElementById("curate-trim-end"),
+  raw: document.getElementById("curate-view-raw"),
+  notes: document.getElementById("curate-notes"),
+};
 
 const rEl = {
-  select: document.getElementById("replay-select"),
   play: document.getElementById("replay-play"),
   stop: document.getElementById("replay-stop"),
-  refresh: document.getElementById("replay-refresh"),
   scrub: document.getElementById("replay-scrub"),
   status: document.getElementById("replay-status"),
 };
 
-async function loadEpisodeList(refresh = false) {
-  const r = await fetch(`/api/episodes${refresh ? "?refresh=true" : ""}`)
-    .then((x) => x.json()).catch(() => ({ episodes: [] }));
-  const eps = r.episodes ?? [];
-  rEl.select.innerHTML = eps.length
-    ? '<option value="">— pick an episode —</option>'
-    : '<option value="">— no episodes recorded —</option>';
-  for (const e of eps) {
-    const o = document.createElement("option");
-    o.value = String(e.index);
-    o.textContent = `#${e.index} — ${e.frames} frames (${e.seconds}s)`
-      + (e.task ? ` — ${e.task}` : "");
-    rEl.select.appendChild(o);
-  }
-  if (r.error) {
-    rEl.status.textContent = r.error;
-    rEl.status.classList.add("err");
-  } else {
-    rEl.status.classList.remove("err");
-    rEl.status.textContent = eps.length
-      ? "Pick an episode to watch it back."
-      : `nothing recorded yet in ${r.root}`;
+function episodeKey(episode) {
+  return `${episode.session_id}:${episode.source_index}`;
+}
+
+function effectiveTaskId(episode) {
+  return episode.task_id || episode.source_task_id;
+}
+
+function renderTaskGroups() {
+  curateEl.taskList.innerHTML = "";
+  const groups = [
+    { id: null, name: "All", episodes: curateEpisodes.length },
+    ...tasks.map((task) => ({
+      id: task.id,
+      name: task.name,
+      episodes: curateEpisodes.filter(
+        (episode) => effectiveTaskId(episode) === task.id).length,
+    })).filter((group) => group.episodes > 0),
+  ];
+  for (const group of groups) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "task-group";
+    button.setAttribute("aria-pressed", String(curateTaskId === group.id));
+    button.textContent = `${group.name} · ${group.episodes}`;
+    button.addEventListener("click", () => {
+      curateTaskId = group.id;
+      renderTaskGroups();
+      renderEpisodeList();
+    });
+    curateEl.taskList.appendChild(button);
   }
 }
 
-async function showFrame(n) {
-  if (!replay.states) return;
-  const i = Math.max(0, Math.min(n, replay.states.length - 1));
-  replay.frame = i;
-  rEl.scrub.value = String(i);
-
-  // 3D view follows the RECORDED joint positions
-  const names = replay.names;
-  const pose = {};
-  names.forEach((nm, k) => { pose[nm] = replay.states[i][k]; });
-  scene.setJoints(pose);
-  for (const nm of NAMES) if (nm in pose) {
-    rows[nm].inp.value = pose[nm];
-    rows[nm].out.textContent = pose[nm].toFixed(2);
-  }
-
-  const secs = (i / replay.fps).toFixed(1);
-  const total = (replay.states.length / replay.fps).toFixed(1);
-  rEl.status.textContent =
-    `episode #${replay.episode} — frame ${i + 1}/${replay.states.length}`
-    + ` (${secs}s / ${total}s)`;
-
-  // recorded camera frames into the same panels
-  for (const cam of ["wrist", "ext"]) {
-    const img = document.getElementById(`cam-${cam}`);
-    try {
-      const blob = await fetch(
-        `/api/episodes/${replay.episode}/frame/${i}?cam=${cam}`)
-        .then((x) => x.blob());
-      const url = URL.createObjectURL(blob);
-      img.src = url;
-      if (replay.urls[cam]) URL.revokeObjectURL(replay.urls[cam]);
-      replay.urls[cam] = url;
-    } catch { /* frame unavailable; leave the last one up */ }
-  }
-}
-
-async function selectEpisode(index) {
-  stopReplay();
-  if (index === "") {
-    replay.states = null;
-    replay.active = false;
-    rEl.play.disabled = rEl.scrub.disabled = true;
-    rEl.status.textContent = "Pick an episode to watch it back.";
+function renderEpisodeList() {
+  const visible = curateEpisodes.filter(
+    (episode) => !curateTaskId
+      || effectiveTaskId(episode) === curateTaskId);
+  curateEl.episodeList.innerHTML = "";
+  if (!visible.length) {
+    curateEl.episodeList.textContent = curateSessions.length
+      ? "No episodes in this task group."
+      : "No finalized sessions yet.";
     return;
   }
-  rEl.status.textContent = "loading…";
-  const s = await fetch(`/api/episodes/${index}/states`).then((x) => x.json());
-  replay.episode = Number(index);
-  replay.states = s.states;
-  replay.names = s.names;
-  replay.fps = s.fps || 30;
-  replay.active = true;          // panels switch to recorded data
-  rEl.scrub.max = String(s.states.length - 1);
-  rEl.scrub.disabled = false;
-  rEl.play.disabled = false;
-  await showFrame(0);
+  for (const episode of visible) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "episode-item";
+    button.setAttribute(
+      "aria-current",
+      String(selectedEpisode
+        && episodeKey(selectedEpisode) === episodeKey(episode)),
+    );
+    const task = taskById(effectiveTaskId(episode));
+    const title = document.createElement("strong");
+    title.textContent = `${episode.session_name || "Session"} · #${episode.source_index}`;
+    const details = document.createElement("span");
+    details.textContent = `${episode.review} · ${episode.effective_frames} frames`
+      + ` · ${task?.name ?? "unknown task"}`;
+    button.append(title, details);
+    button.addEventListener("click", () => selectCuratedEpisode(episode));
+    curateEl.episodeList.appendChild(button);
+  }
+}
+
+async function refreshCurate() {
+  try {
+    if (!tasks.length) await refreshTasks();
+    curateSessions = (
+      await request("/api/curation/sessions")).sessions ?? [];
+    const groups = await Promise.all(curateSessions.map((session) =>
+      request(`/api/curation/sessions/${session.id}/episodes`)));
+    curateEpisodes = groups.flatMap((group) => group.episodes ?? []);
+    if (selectedEpisode) {
+      selectedEpisode = curateEpisodes.find(
+        (episode) => episodeKey(episode) === episodeKey(selectedEpisode),
+      ) ?? null;
+    }
+    renderTaskGroups();
+    renderEpisodeList();
+    if (selectedEpisode) renderEpisodeEditor();
+  } catch (error) {
+    curateEl.episodeList.textContent = error.message;
+    curateEl.episodeList.classList.add("err");
+  }
+}
+
+function renderEpisodeEditor() {
+  const episode = selectedEpisode;
+  curateEl.empty.hidden = !!episode;
+  curateEl.controls.hidden = !episode;
+  if (!episode) {
+    curateEl.title.textContent = "No episode selected";
+    curateEl.review.textContent = "—";
+    return;
+  }
+  const task = taskById(effectiveTaskId(episode));
+  curateEl.title.textContent =
+    `${episode.session_name || "Session"} · #${episode.source_index}`;
+  curateEl.review.textContent = episode.review;
+  curateEl.meta.textContent =
+    `${episode.frames} raw frames · ${episode.effective_frames} curated`
+    + ` · ${task?.name ?? "unknown task"}`;
+  fillTaskSelect(curateEl.task, effectiveTaskId(episode), true);
+  curateEl.trimStart.value = String(episode.start_frame);
+  curateEl.trimEnd.value = String(episode.end_frame_exclusive);
+  curateEl.trimStart.max = String(episode.frames - 1);
+  curateEl.trimEnd.max = String(episode.frames);
+  curateEl.notes.value = episode.notes ?? "";
+  for (const [id, review] of [
+    ["curate-keep", "kept"],
+    ["curate-reject", "rejected"],
+    ["curate-unreview", "unreviewed"],
+  ]) {
+    document.getElementById(id).classList.toggle(
+      "primary", episode.review === review);
+  }
 }
 
 function stopReplay() {
-  if (replay.timer) { clearInterval(replay.timer); replay.timer = null; }
+  if (replay.timer) {
+    clearInterval(replay.timer);
+    replay.timer = null;
+  }
   rEl.play.textContent = "Play";
-  rEl.stop.disabled = true;
+  rEl.stop.disabled = !replay.states;
+}
+
+async function showFrame(n) {
+  if (!replay.states || !selectedEpisode) return;
+  const i = Math.max(0, Math.min(n, replay.states.length - 1));
+  replay.frame = i;
+  rEl.scrub.value = String(i);
+  const pose = {};
+  replay.names.forEach((name, index) => {
+    pose[name] = replay.states[i][index];
+  });
+  scene.setJoints(pose);
+  for (const name of NAMES) if (name in pose) {
+    rows[name].inp.value = pose[name];
+    rows[name].out.textContent = pose[name].toFixed(2);
+  }
+  const seconds = (i / replay.fps).toFixed(1);
+  const total = (replay.states.length / replay.fps).toFixed(1);
+  rEl.status.textContent =
+    `frame ${i + 1}/${replay.states.length} · ${seconds}s / ${total}s`;
+  const raw = curateEl.raw.checked ? "&raw=true" : "";
+  for (const cam of ["wrist", "ext"]) {
+    try {
+      const response = await fetch(
+        `/api/curation/episodes/${selectedEpisode.session_id}`
+        + `/${selectedEpisode.source_index}/frame/${i}?cam=${cam}${raw}`,
+      );
+      if (!response.ok) continue;
+      const url = URL.createObjectURL(await response.blob());
+      document.getElementById(`cam-${cam}`).src = url;
+      if (replay.urls[cam]) URL.revokeObjectURL(replay.urls[cam]);
+      replay.urls[cam] = url;
+    } catch {
+      // Leave the last decoded frame visible.
+    }
+  }
+}
+
+async function loadCuratedReplay() {
+  if (!selectedEpisode) return;
+  const token = ++selectionToken;
+  stopReplay();
+  rEl.status.textContent = "Loading episode…";
+  const raw = curateEl.raw.checked ? "?raw=true" : "";
+  try {
+    const states = await request(
+      `/api/curation/episodes/${selectedEpisode.session_id}`
+      + `/${selectedEpisode.source_index}/states${raw}`,
+    );
+    if (token !== selectionToken) return;
+    replay.episode = {
+      session_id: selectedEpisode.session_id,
+      source_index: selectedEpisode.source_index,
+    };
+    replay.states = states.states;
+    replay.names = states.names;
+    replay.fps = states.fps || 30;
+    replay.frame = 0;
+    replay.active = true;
+    rEl.scrub.max = String(states.states.length - 1);
+    rEl.scrub.disabled = false;
+    rEl.play.disabled = false;
+    rEl.stop.disabled = false;
+    await showFrame(0);
+  } catch (error) {
+    rEl.status.textContent = error.message;
+    rEl.status.classList.add("err");
+  }
+}
+
+async function selectCuratedEpisode(episode) {
+  await safeStopPhysical();
+  selectedEpisode = episode;
+  curateEl.raw.checked = false;
+  renderEpisodeList();
+  renderEpisodeEditor();
+  await loadCuratedReplay();
 }
 
 function playReplay() {
   if (!replay.states) return;
-  if (replay.timer) { stopReplay(); return; }     // Play doubles as Pause
+  if (replay.timer) {
+    stopReplay();
+    return;
+  }
   rEl.play.textContent = "Pause";
-  rEl.stop.disabled = false;
   replay.timer = setInterval(() => {
     if (replay.frame >= replay.states.length - 1) {
-      stopReplay(); showFrame(0); return;
+      stopReplay();
+      showFrame(0);
+      return;
     }
     showFrame(replay.frame + 1);
   }, 1000 / replay.fps);
 }
 
-rEl.select.addEventListener("change", (e) => selectEpisode(e.target.value));
 rEl.play.addEventListener("click", playReplay);
-rEl.scrub.addEventListener("input", (e) => {
-  stopReplay();
-  showFrame(Number(e.target.value));
-});
-rEl.refresh.addEventListener("click", () => loadEpisodeList(true));
 rEl.stop.addEventListener("click", () => {
-  // Leave replay entirely: panels and 3D view go back to live data.
   stopReplay();
-  replay.active = false;
-  replay.states = null;
-  rEl.select.value = "";
-  rEl.scrub.disabled = rEl.play.disabled = true;
-  rEl.status.textContent = "Live. Pick an episode to watch it back.";
+  showFrame(0);
 });
+rEl.scrub.addEventListener("input", (event) => {
+  stopReplay();
+  showFrame(Number(event.target.value));
+});
+document.getElementById("curate-refresh").addEventListener(
+  "click", refreshCurate);
 
-loadEpisodeList();
+async function patchSelected(patch) {
+  if (!selectedEpisode) return;
+  const key = episodeKey(selectedEpisode);
+  await safeStopPhysical();
+  try {
+    await jsonRequest(
+      `/api/curation/episodes/${selectedEpisode.session_id}`
+      + `/${selectedEpisode.source_index}`,
+      "PATCH",
+      patch,
+    );
+    await refreshCurate();
+    selectedEpisode = curateEpisodes.find(
+      (episode) => episodeKey(episode) === key) ?? null;
+    renderEpisodeList();
+    renderEpisodeEditor();
+    if (selectedEpisode) await loadCuratedReplay();
+  } catch (error) {
+    rEl.status.textContent = error.message;
+    rEl.status.classList.add("err");
+  }
+}
 
-// ── replay ON THE REAL ARM ─────────────────────────────────────────────
-// Deliberately more friction than the visual player: arming is a separate
-// act, running requires an armed session AND a selected episode, and STOP is
-// always live. Everything published still passes through the driver's gates;
-// stopping simply ceases publishing and the deadman freezes the arm.
+document.getElementById("curate-keep").addEventListener(
+  "click", () => patchSelected({ review: "kept" }));
+document.getElementById("curate-reject").addEventListener(
+  "click", () => patchSelected({ review: "rejected" }));
+document.getElementById("curate-unreview").addEventListener(
+  "click", () => patchSelected({ review: "unreviewed" }));
+curateEl.task.addEventListener("change", () => {
+  const value = curateEl.task.value;
+  patchSelected({
+    task_id: value === selectedEpisode.source_task_id ? null : value,
+  });
+});
+document.getElementById("curate-trim-apply").addEventListener("click", () => {
+  const start = Number(curateEl.trimStart.value);
+  const end = Number(curateEl.trimEnd.value);
+  patchSelected({
+    trim: { start_frame: start, end_frame_exclusive: end },
+  });
+});
+document.getElementById("curate-trim-reset").addEventListener(
+  "click", () => patchSelected({ trim: null }));
+curateEl.raw.addEventListener("change", async () => {
+  await safeStopPhysical();
+  await loadCuratedReplay();
+});
+document.getElementById("curate-notes-save").addEventListener(
+  "click", () => patchSelected({ notes: curateEl.notes.value }));
+
+// ── physical replay ────────────────────────────────────────────────────
 
 const pEl = {
   arm: document.getElementById("phys-arm"),
@@ -558,67 +960,197 @@ const pEl = {
   status: document.getElementById("phys-status"),
 };
 
-async function physApi(path, body) {
-  const r = await fetch(path, {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify(body ?? {}),
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.detail || `${path} failed (${r.status})`);
-  return data;
+function physApi(path, body) {
+  return jsonRequest(path, "POST", body);
 }
 
-function renderPhys(s) {
-  if (!s) return;
-  const armed = !!s.armed;         // coerced: toggle(name, undefined) flips
+function replayLabel(selection) {
+  if (selection && typeof selection === "object")
+    return `${selection.session_id}:${selection.source_index}`;
+  return String(selection ?? "");
+}
+
+function renderPhys(status) {
+  if (!status) return;
+  const armed = !!status.armed;
   pEl.arm.textContent = armed ? "Disarm" : "Arm";
   pEl.arm.classList.toggle("primary", armed);
-  // Web control cannot be taken while replay holds /joint_command; show that
-  // on the switch rather than only telling them after they click it.
   master.classList.toggle("blocked", armed);
   master.title = armed ? "disarm replay first" : "";
-  const running = s.phase === "seeking" || s.phase === "playing";
-  pEl.play.disabled = !armed || running || replay.episode === null;
+  const running = status.phase === "seeking" || status.phase === "playing";
+  pEl.play.disabled = !armed || running || !selectedEpisode;
   pEl.stop.disabled = !running;
-  if (s.error) {
-    pEl.status.textContent = s.error;
+  if (status.error) {
+    pEl.status.textContent = status.error;
     pEl.status.classList.add("err");
     return;
   }
   pEl.status.classList.remove("err");
-  pEl.status.textContent =
-    s.phase === "seeking"
-      ? "moving to the episode's start pose (driver-limited speed)…"
-      : s.phase === "playing"
-        ? `running episode #${s.episode} — frame ${s.frame + 1}/${s.total}`
-        : s.phase === "done"
-          ? `finished episode #${s.episode}`
-          : (armed ? "armed — the arm will move when you press Run"
-                     : "disarmed");
+  pEl.status.textContent = status.phase === "seeking"
+    ? "Moving to the selected range start at driver-limited speed…"
+    : status.phase === "playing"
+      ? `Running ${replayLabel(status.episode)}`
+        + ` · frame ${status.frame + 1}/${status.total}`
+      : status.phase === "done"
+        ? `Finished ${replayLabel(status.episode)}`
+        : armed
+          ? "Armed — the arm moves when you press Run"
+          : "Disarmed";
+}
+
+async function safeStopPhysical() {
+  if (!pEl) return;
+  try {
+    await physApi("/api/replay/stop");
+    renderPhys(await physApi("/api/replay/arm", { on: false }));
+  } catch {
+    // The server also disarms on curation changes and last-client exit.
+  }
 }
 
 pEl.arm.addEventListener("click", async () => {
   const armed = pEl.arm.textContent === "Disarm";
   try {
     renderPhys(await physApi("/api/replay/arm", { on: !armed }));
-  } catch (e) {
-    pEl.status.textContent = e.message;
+  } catch (error) {
+    pEl.status.textContent = error.message;
     pEl.status.classList.add("err");
   }
 });
-
 pEl.play.addEventListener("click", async () => {
-  if (replay.episode === null) return;
+  if (!selectedEpisode) return;
   try {
     renderPhys(await physApi("/api/replay/play", {
-      episode: replay.episode, speed: Number(pEl.speed.value),
+      session_id: selectedEpisode.session_id,
+      episode: selectedEpisode.source_index,
+      raw: curateEl.raw.checked,
+      speed: Number(pEl.speed.value),
     }));
-  } catch (e) {
-    pEl.status.textContent = e.message;
+  } catch (error) {
+    pEl.status.textContent = error.message;
     pEl.status.classList.add("err");
   }
 });
-
 pEl.stop.addEventListener("click", async () => {
-  try { renderPhys(await physApi("/api/replay/stop")); } catch { /* ignore */ }
+  try {
+    renderPhys(await physApi("/api/replay/stop"));
+  } catch {
+    // STOP remains best effort; the driver deadman is the final freeze gate.
+  }
 });
+
+// ── immutable LeRobot v3 export dialog ─────────────────────────────────
+
+const exportEl = {
+  root: document.getElementById("export-dialog"),
+  name: document.getElementById("export-name"),
+  tasks: document.getElementById("export-task-list"),
+  preview: document.getElementById("export-preview"),
+  summary: document.getElementById("export-summary"),
+  start: document.getElementById("export-start"),
+};
+let exportPreview = null;
+
+function selectedExportTasks() {
+  return [...exportEl.tasks.querySelectorAll("input:checked")]
+    .map((input) => input.value);
+}
+
+function renderExportTasks() {
+  exportEl.tasks.innerHTML = "";
+  const keptByTask = new Map();
+  for (const episode of curateEpisodes) {
+    if (episode.review !== "kept") continue;
+    const taskId = effectiveTaskId(episode);
+    keptByTask.set(taskId, (keptByTask.get(taskId) ?? 0) + 1);
+  }
+  for (const task of tasks) {
+    const kept = keptByTask.get(task.id) ?? 0;
+    if (!kept) continue;
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = task.id;
+    input.checked = curateTaskId ? task.id === curateTaskId : true;
+    input.addEventListener("change", invalidateExportPreview);
+    label.append(input, `${task.name} · ${kept} kept`);
+    exportEl.tasks.appendChild(label);
+  }
+  if (!exportEl.tasks.children.length)
+    exportEl.tasks.textContent = "No kept episodes are available.";
+}
+
+function invalidateExportPreview() {
+  exportPreview = null;
+  exportEl.start.disabled = true;
+  exportEl.summary.textContent = "Validate the updated selection before export.";
+  exportEl.summary.classList.remove("err");
+}
+
+document.getElementById("export-open").addEventListener("click", () => {
+  renderExportTasks();
+  invalidateExportPreview();
+  exportEl.root.showModal();
+  exportEl.name.focus();
+});
+exportEl.name.addEventListener("input", invalidateExportPreview);
+exportEl.preview.addEventListener("click", async () => {
+  try {
+    exportPreview = await jsonRequest("/api/exports/preview", "POST", {
+      name: exportEl.name.value,
+      task_ids: selectedExportTasks(),
+    });
+    exportEl.summary.textContent =
+      `${exportPreview.kept_episodes} episodes · ${exportPreview.frames} frames`
+      + ` · ${exportPreview.seconds.toFixed(1)}s`
+      + ` → ${exportPreview.name}-v${String(exportPreview.next_version).padStart(3, "0")}`;
+    exportEl.summary.classList.remove("err");
+    exportEl.start.disabled = false;
+  } catch (error) {
+    exportEl.summary.textContent = error.message;
+    exportEl.summary.classList.add("err");
+    exportEl.start.disabled = true;
+  }
+});
+
+async function pollExport(exportId) {
+  const status = await request(`/api/exports/${exportId}`);
+  if (status.state === "complete") {
+    exportEl.summary.textContent =
+      `Export complete · ${status.episodes} episodes · ${status.root}`;
+    exportEl.start.disabled = false;
+    return;
+  }
+  if (status.state === "failed") {
+    exportEl.summary.textContent = status.error || "Export failed.";
+    exportEl.summary.classList.add("err");
+    exportEl.start.disabled = false;
+    return;
+  }
+  exportEl.summary.textContent = `${status.state}… video encoding continues in the background`;
+  setTimeout(() => pollExport(exportId).catch((error) => {
+    exportEl.summary.textContent = error.message;
+    exportEl.summary.classList.add("err");
+  }), 1000);
+}
+
+exportEl.start.addEventListener("click", async () => {
+  if (!exportPreview) return;
+  exportEl.start.disabled = true;
+  try {
+    const record = await jsonRequest("/api/exports", "POST", {
+      name: exportEl.name.value,
+      task_ids: selectedExportTasks(),
+    });
+    exportEl.summary.textContent = "Queued…";
+    await pollExport(record.id);
+  } catch (error) {
+    exportEl.summary.textContent = error.message;
+    exportEl.summary.classList.add("err");
+    exportEl.start.disabled = false;
+  }
+});
+
+// Initial server-backed state.
+refreshTasks().then(() => renderCollection(collectionSnapshot));
+refreshRecoveries();
