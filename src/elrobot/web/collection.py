@@ -322,6 +322,21 @@ class CollectionCatalog:
             )
             return copy.deepcopy(sessions)
 
+    def session(self, session_id: str) -> dict:
+        with self._lock:
+            return copy.deepcopy(self._session(self._data, session_id))
+
+    def tasks(self, include_archived: bool = True) -> list[dict]:
+        with self._lock:
+            tasks = self._data["tasks"].values()
+            if not include_archived:
+                tasks = (task for task in tasks if not task["archived"])
+            return copy.deepcopy(sorted(tasks, key=lambda item: item["name"]))
+
+    def task(self, task_id: str) -> dict:
+        with self._lock:
+            return copy.deepcopy(self._task(self._data, task_id))
+
     def episode(self, session_id: str, source_index: int) -> dict:
         with self._lock:
             session = self._session(self._data, session_id)

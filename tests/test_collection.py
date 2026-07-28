@@ -84,12 +84,164 @@ def test_export_records_share_atomic_catalog_path():
     assert CollectionCatalog(c.root).export("export_test")["state"] == "complete"
 
 
+class FakeRecorder:
+    def __init__(self):
+        self.recording = False
+        self.task = None
+        self.episodes = 0
+        self.next_frames = 12
+        self.closed = False
+
+    def set_task(self, instruction):
+        if self.recording:
+            raise RuntimeError
+        self.task = instruction
+
+    def start(self):
+        self.recording = True
+        return True
+
+    def stop(self):
+        self.recording = False
+        self.episodes += 1
+        return self.next_frames
+
+    def discard(self):
+        self.recording = False
+
+    def close(self):
+        self.closed = True
+
+
+def _validator(recorders):
+    def validate(session, finalize):
+        count = recorders[0].episodes if recorders else 0
+        return {"count": count, "lengths": [12] * count}
+
+    return validate
+
+
+def test_collection_lifecycle_and_task_lock():
+    from elrobot.web.collection_manager import CollectionError, CollectionManager
+
+    c = catalog()
+    a = c.create_task("Pick", "Pick.")
+    b = c.create_task("Place", "Place.")
+    made = []
+    m = CollectionManager(
+        c,
+        recorder_factory=lambda _: made.append(FakeRecorder()) or made[-1],
+        dataset_validator=_validator(made),
+    )
+    assert m.start_session(a["id"], "morning")["state"] == "ready"
+    assert m.start_episode(a["id"])["state"] == "recording"
+    try:
+        m.start_episode(b["id"])
+    except CollectionError as exc:
+        assert exc.code == 409
+    else:
+        raise AssertionError("started a second episode")
+    assert m.stop_episode()["state"] == "ready"
+    assert m.start_episode(b["id"])["state"] == "recording"
+    assert m.discard_episode()["state"] == "ready"
+    done = m.finish_session()
+    assert done["state"] == "idle"
+    assert made[0].closed is True
+
+
+def test_invalid_transitions_and_empty_finish():
+    from elrobot.web.collection_manager import CollectionError, CollectionManager
+
+    c = catalog()
+    task = c.create_task("Pick", "Pick.")
+    made = []
+    m = CollectionManager(
+        c,
+        recorder_factory=lambda _: made.append(FakeRecorder()) or made[-1],
+        dataset_validator=_validator(made),
+    )
+    m.start_session(task["id"])
+    try:
+        m.start_session(task["id"])
+    except CollectionError as exc:
+        assert exc.code == 409
+    else:
+        raise AssertionError("started overlapping session")
+    assert m.finish_session()["state"] == "idle"
+    assert c.sessions()[0]["state"] == "archived_empty"
+
+
+def test_finish_refuses_while_recording():
+    from elrobot.web.collection_manager import CollectionError, CollectionManager
+
+    c = catalog()
+    task = c.create_task("Pick", "Pick.")
+    made = []
+    m = CollectionManager(
+        c,
+        recorder_factory=lambda _: made.append(FakeRecorder()) or made[-1],
+        dataset_validator=_validator(made),
+    )
+    m.start_session(task["id"])
+    m.start_episode(task["id"])
+    try:
+        m.finish_session()
+    except CollectionError as exc:
+        assert exc.code == 409
+    else:
+        raise AssertionError("finished a session while recording")
+
+
+def test_recovery_reconciles_one_saved_pending_episode():
+    from elrobot.web.collection_manager import CollectionManager
+
+    c = catalog()
+    task = c.create_task("Pick", "Pick.")
+    session = c.create_session("interrupted")
+    c.set_pending(session["id"], task["id"])
+    c.finalize_session(session["id"], "recoverable")
+
+    def validator(record, finalize):
+        return {"count": 1, "lengths": [12]}
+
+    m = CollectionManager(
+        c,
+        recorder_factory=lambda _: FakeRecorder(),
+        dataset_validator=validator,
+    )
+    m.recover_finish(session["id"])
+    repaired = c.episode(session["id"], 0)
+    assert repaired["frames"] == 12
+    assert repaired["interrupted"] is True
+
+
+def test_archive_recovery_keeps_raw_files():
+    from elrobot.web.collection_manager import CollectionManager
+
+    c = catalog()
+    session = c.create_session("broken")
+    raw_root = Path(session["root"])
+    raw_root.mkdir(parents=True)
+    sentinel = raw_root / "do-not-delete"
+    sentinel.write_text("raw")
+    c.finalize_session(session["id"], "recoverable")
+    m = CollectionManager(c, recorder_factory=lambda _: FakeRecorder())
+    m.recover_archive(session["id"])
+    assert sentinel.read_text() == "raw"
+    assert c.sessions()[0]["state"] == "archived_incomplete"
+
+
 def main():
     test_tasks_have_stable_identity_and_archive()
     test_episode_edits_are_reversible_overlays()
     test_trim_and_review_validation()
     test_catalog_write_is_reloadable_and_revisioned()
     test_export_records_share_atomic_catalog_path()
+    test_collection_lifecycle_and_task_lock()
+    test_invalid_transitions_and_empty_finish()
+    test_finish_refuses_while_recording()
+    test_recovery_reconciles_one_saved_pending_episode()
+    test_archive_recovery_keeps_raw_files()
     print("COLLECTION TESTS PASSED")
 
 
