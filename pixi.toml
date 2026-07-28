@@ -36,6 +36,8 @@ packaging = ">=24.2,<26"
 numpy = ">=2.0,<2.3"
 
 [pypi-dependencies]
+# Starlette 1.x TestClient runs on the maintained HTTPX2 transport.
+httpx2 = "*"
 # PyPI lerobot==0.1.0 is a stale placeholder with NO motors/feetech code.
 # The maintained bus (FeetechMotorsBus, sync_read/sync_write) lives only on git.
 # The `feetech` extra pulls feetech-servo-sdk itself.
