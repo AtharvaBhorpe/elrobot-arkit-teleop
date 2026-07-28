@@ -6,7 +6,8 @@ through damped-least-squares servo IK; screen touches work the clutch and
 gripper. Includes contact-sensing grasping, three DoF modes, dual-camera
 recording straight into LeRobotDataset for imitation learning, mcap session
 capture for Foxglove, and a browser cockpit that drives the arm, runs the
-calibration wizard, records episodes and replays them
+calibration wizard, manages task-labelled collection, curates and replays
+episodes, and exports immutable LeRobot v3 datasets
 ([guide](docs/web-cockpit-guide.md)).
 
 ![Foxglove: the URDF tracking the real arm, alongside both camera feeds](assets/foxglove-demo.gif)
@@ -53,11 +54,14 @@ pixi run test               # every offline test suite (no hardware needed)
 
 # a teleop session (arm plugged in, calibrated):
 pixi run m3-arm             # phone drives the real arm (+ rviz)
-pixi run web                # browser cockpit at http://localhost:8080
+pixi run web                # prints the browser cockpit URL
 pixi run cams               # WRIST_DEV=/dev/videoX EXT_DEV=/dev/videoY
-pixi run record             # LeRobotDataset episodes (ENTER = start/stop)
 pixi run bag                # optional: everything to mcap
 ```
+
+Use **Teleop → Collect** in the cockpit for managed task-labelled recording.
+`pixi run record` remains available for standalone CLI capture, but do not run
+it alongside a managed cockpit collection session.
 
 First time on new hardware: calibrate first — the guided procedure is the
 `/recalibrate` Claude skill, or follow the spec's Calibration section
@@ -69,7 +73,7 @@ First time on new hardware: calibrate first — the guided procedure is the
 |---|---|
 | `m3-arm` / `m3-arm6` / `m3-arm5` | phone → real arm (7 / 6+1 / 5+1 DoF) |
 | `jog` | slider GUI → real arm (sliders seed from the real pose) |
-| `web` | browser cockpit on :8080 — sliders, live URDF, cams, calibrate, record, replay ([guide](docs/web-cockpit-guide.md)) |
+| `web` | browser cockpit on :8080 — teleop, managed collection, reversible curation, replay, calibration, LeRobot v3 export; prints its URL ([guide](docs/web-cockpit-guide.md)) |
 | `view`, `m2` | visualization only, no hardware |
 | `cams` / `campick` / `rqt-cam` | camera nodes / identify devices / view feeds |
 | `record` / `bag` | LeRobotDataset episodes / mcap rosbag |
@@ -78,7 +82,19 @@ First time on new hardware: calibrate first — the guided procedure is the
 | `test` / `lint` / `prove-env` | all offline suites / ruff / env import gate |
 
 Tuning knobs as env prefixes: `PORT= SCALE= ORIENT=0 SMOOTH= MAX_VEL=
-FREEZE= GRIP_LOAD_THRESH= GRIP_SQUEEZE= Z_MIN= R_MAX= RVIZ=0`.
+FREEZE= GRIP_LOAD_THRESH= GRIP_SQUEEZE= Z_MIN= R_MAX= RVIZ=0
+COLLECTION_ROOT=`.
+
+## Pipeline status
+
+The collection and curation milestone is implemented and passes the complete
+offline suite. Physical operator validation is still pending: collect a short
+session, curate and visually replay it, run a guarded `0.6×` physical replay,
+verify STOP/deadman behavior, then load the exported dataset.
+
+Training and inference are the next phases and remain intentionally Python.
+Rust/C++ ports are deferred unless measurements show a control deadline problem
+that recorder thread tuning does not solve.
 
 ## Safety model
 
@@ -98,19 +114,23 @@ src/elrobot/
 ├── nodes/        the three ROS 2 nodes (driver, ik, receiver) + cams + recorder
 ├── control/      cartesian_ik — DLS servo IK, task-priority frozen-joint modes
 ├── calibration/  guided procedures: bus probe, M1a/M1b, FK verification
+├── web/          cockpit, collection catalog/manager, curation, replay, export
 └── tools/        watch_ticks, cam_picker, nudge, viz-URDF generator
 launch/           ros2 launch files (m3 / jog / cams / view / m2)
 config/           view.rviz — edit this file to add displays, never rviz "Add Display"
 tests/            offline suites, no hardware needed (pixi run test)
 calibration/      servo tick ↔ URDF radian tables — sacred, hook-protected
 docs/             real URDF (kinematic truth), vendored meshes, design spec
-data/             episodes, bags, derived viz meshes (gitignored)
+data/             collections, immutable exports, episodes, bags, derived viz meshes (gitignored)
 tasks/            implementation plan + todo
 AGENTS.md         conventions + hard rules, each earned by an incident
 ```
 
 The full design rationale and decision history:
 [`docs/superpowers/specs/2026-07-20-elrobot-arkit-teleop-design.md`](docs/superpowers/specs/2026-07-20-elrobot-arkit-teleop-design.md).
+
+The implemented dataset workflow is specified in
+[`docs/superpowers/specs/2026-07-28-collection-curation-design.md`](docs/superpowers/specs/2026-07-28-collection-curation-design.md).
 
 ## License
 

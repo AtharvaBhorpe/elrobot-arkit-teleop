@@ -17,6 +17,12 @@ task-labelled collection → curation → LeRobot v3 export workflow.
 > **LAN only, no authentication.** This page can move a real robot. Do not
 > port-forward it or expose it beyond your local network.
 
+**Delivery status:** collection, reversible curation, replay, and local
+LeRobot v3 export are implemented and offline-verified. Restart any cockpit
+process started before an update so its backend and browser assets match.
+The physical operator check remains pending; follow Section 6 with the arm
+area clear. Training and inference controls are a later Python milestone.
+
 ---
 
 ## 1. What to run alongside it

@@ -366,4 +366,8 @@ played in the Franka project.
 
 Deliberately excluded from this design: imitation-learning data collection, Rerun
 recording, VLA policy integration, and any NormaCore station interoperability. Those
-are later phases and none of them change the decisions above.
+are later phases and none of them change the decisions above. Task-labelled
+collection, reversible curation, and LeRobot v3 export were subsequently added
+by the
+[`2026-07-28 collection/curation design`](2026-07-28-collection-curation-design.md);
+training and inference remain later Python phases.

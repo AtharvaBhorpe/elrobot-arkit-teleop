@@ -1,7 +1,7 @@
 # Recorder Save-Path Performance — Design
 
 **Date:** 2026-07-28
-**Status:** Approved in brainstorming; ready for implementation planning
+**Status:** Implemented; offline verification passed; physical operator check pending
 
 ## Goal
 
@@ -46,7 +46,7 @@ encoder_threads=2
 
 `encoder_threads` is exposed as a recorder CLI option with default `2`, because
 encoder contention depends on the deployment CPU. The cockpit-managed recorder
-will inherit the same default when collection and curation are implemented.
+uses the same default.
 
 The codec, pixel format, CRF, preset, frame rate, image size, LeRobot v3 layout,
 and episode semantics remain unchanged. Existing raw datasets remain readable
@@ -70,9 +70,9 @@ After:
 capture frames → bounded streaming encoders → Stop → drain short remainder → save episode
 ```
 
-The recorder remains a separate ROS node today and the same reusable recorder
-class remains the collection manager's dataset writer later. Teleop, IK, driver,
-camera, cockpit, replay, and export boundaries do not change.
+The standalone recorder remains a separate ROS node. The cockpit collection
+manager owns the same reusable recorder class in-process for managed sessions.
+Teleop, IK, driver, camera, replay, and export boundaries do not change.
 
 ## Error handling
 
