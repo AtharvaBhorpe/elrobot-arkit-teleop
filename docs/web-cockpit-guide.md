@@ -106,20 +106,24 @@ last, slew-limited. Turn one off unless you specifically want that.
 The header switches between two workspaces without creating a second 3D
 renderer or another pair of camera pollers:
 
-- **Teleop** — both camera feeds and the 3D model on the left, **Calibrate /
-  Collect** tabs in the middle, and joint sliders on the right.
-- **Curate** — task groups and episode list on the left, the same camera/3D
-  stage in the middle, and reversible review/replay/export controls on the
+- **Teleop** — both camera feeds, the 3D model, and joint-angle plot on the
+  left, **Calibrate / Collect** tabs in the middle, and joint sliders on the
   right.
+- **Curate** — task groups and episode list on the left, the same camera/3D
+  model/plot stage in the middle, and reversible review/replay/export controls
+  on the right.
 
-The camera/3D stage is always visible. Drag in the 3D view to orbit and scroll
-to zoom. The model mirrors the real arm from `/joint_states` whether or not
-you are commanding it.
+The visual stage is always visible. Drag in the 3D view to orbit and scroll to
+zoom. The model mirrors the real arm from `/joint_states` whether or not you
+are commanding it. The joint plot overlays J1–J8 in radians. In Teleop it
+retains the latest 15 seconds of `/joint_states`; click a J1–J8 legend button
+to hide or restore that line.
 
 ![Teleop and task-labelled collection workspace](assets/cockpit-teleop-collect.jpg)
 
-*Teleop → Collect. The driver and cameras were intentionally disconnected for
-this documentation capture.*
+*Teleop → Collect. The cameras are intentionally disconnected for this
+documentation capture; the joint stream is synthetic so the plot has
+representative motion.*
 
 ![Reversible episode curation workspace](assets/cockpit-curate.jpg)
 
@@ -256,6 +260,9 @@ The Curate player drives the existing 3D view and camera panels from the
 selected effective range. It never publishes `/joint_command`. Scrubbing,
 raw/curated switching, and reaching the end all remain visual-only; after the
 last frame, **Play** resets to frame zero so it can immediately be replayed.
+For a selected episode, the same plot shows the complete effective joint-angle
+trajectory and a moving playhead. Clicking or dragging in the plot scrubs the
+plot, 3D model, cameras, joint readouts, and replay timeline together.
 
 ### Replaying on the real arm
 

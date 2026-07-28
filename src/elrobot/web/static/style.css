@@ -239,7 +239,7 @@ body {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr);
+  grid-template-columns: minmax(0, 3fr) minmax(240px, 2fr);
   gap: 10px;
 }
 
@@ -260,7 +260,7 @@ body {
 #joint-plot {
   flex: 1;
   min-height: 180px;
-  height: auto !important;
+  height: 0 !important;       /* canvas backing size must not grow the flex row */
   touch-action: none;
 }
 
@@ -303,12 +303,14 @@ body {
     grid-template-columns: 1fr;
   }
   .viewer.card {
+    height: 380px;
     min-height: 380px;
   }
   .visual-row {
     grid-template-columns: 1fr;
   }
   .joint-plot-card {
+    height: 300px;
     min-height: 300px;
   }
   .deck {
