@@ -27,6 +27,19 @@ touches hardware — every safety rule (velocity clamp, workspace box,
 singularity floor, deadman freeze, grasp latch) lives there and is unit
 tested against a stub bus.
 
+## Cockpit
+
+![Teleop and task-labelled collection workspace](docs/assets/cockpit-teleop-collect.jpg)
+
+*Teleop → Collect with the camera stage, live URDF, managed session controls,
+and joint rail. Hardware was intentionally disconnected for this capture.*
+
+![Reversible episode curation workspace](docs/assets/cockpit-curate.jpg)
+
+*Curate groups episodes by task and keeps review, task reassignment, trimming,
+visual replay, guarded physical replay, and export in one workspace. The
+episodes shown are synthetic documentation fixtures.*
+
 ## Hardware
 
 | | |

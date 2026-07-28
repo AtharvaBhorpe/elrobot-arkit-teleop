@@ -116,6 +116,17 @@ The camera/3D stage is always visible. Drag in the 3D view to orbit and scroll
 to zoom. The model mirrors the real arm from `/joint_states` whether or not
 you are commanding it.
 
+![Teleop and task-labelled collection workspace](assets/cockpit-teleop-collect.jpg)
+
+*Teleop → Collect. The driver and cameras were intentionally disconnected for
+this documentation capture.*
+
+![Reversible episode curation workspace](assets/cockpit-curate.jpg)
+
+*Curate with task groups, review decisions, task reassignment, an exclusive
+trim, visual replay, and guarded physical replay. The short episodes are
+synthetic documentation fixtures, not operator recordings.*
+
 Camera frames are shown whole (letterboxed if the tile is a different
 aspect), never cropped — what you see is exactly what `episode_recorder`
 saves, so composing a grasp on screen matches what a trained policy will see.
