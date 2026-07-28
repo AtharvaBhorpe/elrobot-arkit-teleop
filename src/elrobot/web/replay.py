@@ -20,6 +20,7 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import threading  # noqa: E402
 import time  # noqa: E402
+from dataclasses import asdict, is_dataclass  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 import cv2
@@ -114,36 +115,58 @@ class ReplayLibrary:
             })
         return out
 
-    def _bounds(self, episode: int):
+    def _bounds(
+        self, episode: int, start_frame=None, end_frame_exclusive=None,
+    ):
         for e in self.episodes():
             if e["index"] == episode:
-                return e["from"], e["to"]
+                length = e["to"] - e["from"]
+                start = 0 if start_frame is None else int(start_frame)
+                end = (
+                    length if end_frame_exclusive is None
+                    else int(end_frame_exclusive)
+                )
+                if not 0 <= start < end <= length:
+                    raise KeyError(
+                        f"invalid frame range [{start}, {end}) "
+                        f"for {length}-frame episode {episode}")
+                return e["from"] + start, e["from"] + end
         raise KeyError(f"no episode {episode}")
 
-    def actions(self, episode: int) -> list:
+    def actions(
+        self, episode: int, start_frame=None, end_frame_exclusive=None,
+    ) -> list:
         """The recorded ACTION stream - what the operator commanded, which is
         what reproduces the demonstration. (states() returns what the arm
         actually did, which is for looking at, not for re-commanding.)"""
         ds = self._dataset()
-        lo, hi = self._bounds(episode)
+        lo, hi = self._bounds(
+            episode, start_frame, end_frame_exclusive)
         return [np.asarray(ds[i]["action"]).tolist() for i in range(lo, hi)]
 
-    def states(self, episode: int) -> dict:
+    def states(
+        self, episode: int, start_frame=None, end_frame_exclusive=None,
+    ) -> dict:
         """Whole joint trajectory in one response: 8 floats x N frames is
         small, and it lets the browser animate the URDF smoothly without a
         request per frame."""
         ds = self._dataset()
-        lo, hi = self._bounds(episode)
+        lo, hi = self._bounds(
+            episode, start_frame, end_frame_exclusive)
         rows = [np.asarray(ds[i]["observation.state"]).tolist()
                 for i in range(lo, hi)]
         return {"fps": float(ds.fps), "names": JOINTS,
                 "frames": len(rows), "states": rows}
 
-    def frame_jpeg(self, episode: int, n: int, cam: str) -> bytes:
+    def frame_jpeg(
+        self, episode: int, n: int, cam: str,
+        start_frame=None, end_frame_exclusive=None,
+    ) -> bytes:
         key = {"wrist": "observation.images.wrist",
                "ext": "observation.images.external"}[cam]
         ds = self._dataset()
-        lo, hi = self._bounds(episode)
+        lo, hi = self._bounds(
+            episode, start_frame, end_frame_exclusive)
         idx = lo + max(0, min(n, hi - lo - 1))
         img = _to_bgr_u8(ds[idx][key])
         ok, jpg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -202,7 +225,7 @@ class PhysicalReplay:
         self.episode = None
         self.frame = 0
         self.total = 0
-        self.speed = 0.5
+        self.speed = 0.6
         self.error = None
         self._stop = threading.Event()
         self._thread = None
@@ -223,7 +246,7 @@ class PhysicalReplay:
         self.error = None
         return self.status()
 
-    def play(self, episode: int, speed: float = 0.5):
+    def play(self, selection, speed: float = 0.6):
         if not self.armed:
             raise ReplayError("arm replay first (this moves the real arm)")
         if not self._driver_alive():
@@ -237,11 +260,11 @@ class PhysicalReplay:
         if not 0 < speed <= MAX_SPEED:
             raise ReplayError(f"speed must be in (0, {MAX_SPEED}]", code=400)
 
-        actions = self._library.actions(episode)
+        actions = self._library.actions(selection)
         if not actions:
-            raise ReplayError(f"episode {episode} has no frames", code=404)
+            raise ReplayError(f"episode {selection} has no frames", code=404)
 
-        self.episode, self.speed = int(episode), speed
+        self.episode, self.speed = selection, speed
         self.total, self.frame = len(actions), 0
         self.error = None
         self._stop.clear()
@@ -259,8 +282,12 @@ class PhysicalReplay:
         return self.status()
 
     def status(self) -> dict:
+        episode = (
+            asdict(self.episode)
+            if is_dataclass(self.episode) else self.episode
+        )
         return {"armed": self.armed, "phase": self.phase,
-                "episode": self.episode, "frame": self.frame,
+                "episode": episode, "frame": self.frame,
                 "total": self.total, "speed": self.speed,
                 "error": self.error}
 

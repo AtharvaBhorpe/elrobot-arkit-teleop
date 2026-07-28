@@ -33,6 +33,7 @@ from elrobot.control.cartesian_ik import ARM_JOINTS, GRIPPER_JOINT
 from elrobot.web.calib import CalibError, CalibSession
 from elrobot.web.collection import CatalogError, CollectionCatalog
 from elrobot.web.collection_manager import CollectionError, CollectionManager
+from elrobot.web.curation import CuratedReplayLibrary, EpisodeRef
 from elrobot.web.replay import PhysicalReplay, ReplayError, ReplayLibrary
 
 JOINTS = ARM_JOINTS + [GRIPPER_JOINT]
@@ -175,7 +176,9 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
                dataset_validator=None) -> FastAPI:
     calib = CalibSession(bus_factory=bus_factory, port=port,
                          backup_root=backup_root)
-    library = ReplayLibrary(root=dataset_root, repo_id=repo_id)
+    catalog = CollectionCatalog(collection_root)
+    legacy_library = ReplayLibrary(root=dataset_root, repo_id=repo_id)
+    library = CuratedReplayLibrary(catalog, legacy=legacy_library)
     player = PhysicalReplay(
         library,
         publish=bridge.publish_command,
@@ -183,8 +186,6 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
         driver_alive=lambda: (bridge.driver_alive()
                               if hasattr(bridge, "driver_alive") else False),
     )
-    catalog = CollectionCatalog(collection_root)
-
     if recorder_factory is None:
         from elrobot.nodes.episode_recorder import Recorder
 
@@ -206,7 +207,8 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
 
     app = FastAPI(title="elrobot cockpit", lifespan=lifespan)
     app.state.bridge = bridge
-    app.state.library = library
+    app.state.library = legacy_library
+    app.state.curated_library = library
     app.state.player = player
     app.state.catalog = catalog
     app.state.collection = manager
@@ -389,25 +391,95 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
     def collection_recovery_archive(session_id: str):
         return collection_call(manager.recover_archive, session_id)
 
-    # ---- replay: read recorded episodes back, VISUAL ONLY ----------------
-    # Nothing here publishes to /joint_command. Re-executing an episode on
-    # the real arm is deliberately not implemented; see replay.py.
+    # ---- curated collection replay ---------------------------------------
+
+    @app.get("/api/curation/sessions")
+    def curation_sessions():
+        return {
+            "sessions": [
+                {
+                    "id": session["id"],
+                    "name": session["name"],
+                    "created_at": session["created_at"],
+                    "finalized_at": session["finalized_at"],
+                    "episodes": len(session["episodes"]),
+                }
+                for session in catalog.sessions()
+                if session["state"] == "ready"
+            ],
+        }
+
+    @app.get("/api/curation/sessions/{session_id}/episodes")
+    def curation_episodes(session_id: str):
+        collection_call(catalog.session, session_id)
+        return {"episodes": library.list_episodes(session_id=session_id)}
+
+    @app.patch("/api/curation/episodes/{session_id}/{source_index}")
+    def curation_update(
+        session_id: str, source_index: int, body: dict,
+    ):
+        # Curation changes which frames replay means. Stop and explicitly
+        # disarm before changing that meaning so no autonomous publisher can
+        # continue against stale selection metadata.
+        player.stop()
+        player.arm(False, False)
+        return collection_call(
+            catalog.update_episode, session_id, source_index, body)
+
+    @app.get("/api/curation/episodes/{session_id}/{source_index}/states")
+    def curation_states(
+        session_id: str, source_index: int, raw: bool = False,
+    ):
+        try:
+            return library.states(
+                EpisodeRef(session_id, source_index, raw))
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.get(
+        "/api/curation/episodes/{session_id}/{source_index}/frame/{n}",
+    )
+    def curation_frame(
+        session_id: str, source_index: int, n: int,
+        cam: str = "wrist", raw: bool = False,
+    ):
+        if cam not in ("wrist", "ext"):
+            raise HTTPException(404, "cam must be wrist or ext")
+        try:
+            jpeg = library.frame_jpeg(
+                EpisodeRef(session_id, source_index, raw), n, cam)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return Response(
+            content=jpeg,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    # ---- legacy dataset replay ------------------------------------------
 
     @app.get("/api/episodes")
     def episodes(refresh: bool = False):
         if refresh:
-            library.reload()      # pick up episodes recorded since startup
+            legacy_library.reload()  # pick up episodes recorded since startup
         try:
-            return {"root": library.root, "episodes": library.episodes()}
+            return {
+                "root": legacy_library.root,
+                "episodes": legacy_library.episodes(),
+            }
         except Exception as e:                                # noqa: BLE001
             # A half-written or foreign dataset should read as "nothing to
             # replay", not take the whole cockpit page down.
-            return {"root": library.root, "episodes": [], "error": str(e)}
+            return {
+                "root": legacy_library.root,
+                "episodes": [],
+                "error": str(e),
+            }
 
     @app.get("/api/episodes/{index}/states")
     def episode_states(index: int):
         try:
-            return library.states(index)
+            return legacy_library.states(index)
         except KeyError as e:
             raise HTTPException(404, str(e)) from e
 
@@ -430,8 +502,17 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
     @app.post("/api/replay/play")
     def replay_play(body: dict):
         try:
-            return player.play(int(body.get("episode", -1)),
-                               float(body.get("speed", 0.5)))
+            selection = (
+                EpisodeRef(
+                    str(body["session_id"]),
+                    int(body.get("episode", -1)),
+                    bool(body.get("raw", False)),
+                )
+                if body.get("session_id")
+                else int(body.get("episode", -1))
+            )
+            return player.play(
+                selection, float(body.get("speed", 0.6)))
         except ReplayError as e:
             raise HTTPException(e.code, e.detail) from e
         except (KeyError, ValueError) as e:
@@ -446,7 +527,7 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
         if cam not in ("wrist", "ext"):
             raise HTTPException(404, "cam must be wrist or ext")
         try:
-            jpeg = library.frame_jpeg(index, n, cam)
+            jpeg = legacy_library.frame_jpeg(index, n, cam)
         except KeyError as e:
             raise HTTPException(404, str(e)) from e
         return Response(content=jpeg, media_type="image/jpeg",

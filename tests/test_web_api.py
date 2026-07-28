@@ -523,7 +523,9 @@ def test_calib_full_flow_writes_table():
         Path(scratch).unlink(missing_ok=True)
 
 
-def _tiny_dataset(root: Path, episodes=2, frames=6):
+def _tiny_dataset(
+    root: Path, episodes=2, frames=6, repo_id="local/replay_fixture",
+):
     """Build a small dataset of our own rather than reusing whatever
     tests/test_recorder.py happened to leave in data/test_episodes. That
     cross-file dependency broke exactly once: an aborted run left a
@@ -543,7 +545,7 @@ def _tiny_dataset(root: Path, episodes=2, frames=6):
         "observation.images.external": {"dtype": "video", "shape": (48, 64, 3),
                                         "names": ["height", "width", "channels"]},
     }
-    ds = LeRobotDataset.create(repo_id="local/replay_fixture", fps=30,
+    ds = LeRobotDataset.create(repo_id=repo_id, fps=30,
                                features=feats, root=str(root),
                                robot_type="elrobot", video_backend="pyav")
     for ep in range(episodes):
@@ -556,6 +558,98 @@ def _tiny_dataset(root: Path, episodes=2, frames=6):
                 "task": "fixture"})
         ds.save_episode()
     ds.finalize()
+
+
+def _curated_client():
+    from elrobot.web.collection import CollectionCatalog
+
+    root = Path(tempfile.mkdtemp()) / "collections"
+    catalog = CollectionCatalog(root)
+    task = catalog.create_task("Pick", "Pick.")
+    session = catalog.create_session("curation")
+    _tiny_dataset(
+        Path(session["root"]),
+        episodes=2,
+        frames=6,
+        repo_id=session["repo_id"],
+    )
+    for source_index in range(2):
+        catalog.set_pending(session["id"], task["id"])
+        catalog.commit_episode(session["id"], source_index, 6)
+    catalog.update_episode(session["id"], 0, {
+        "review": "kept",
+        "trim": {"start_frame": 1, "end_frame_exclusive": 4},
+    })
+    catalog.finalize_session(session["id"], "ready")
+    bridge = FakeBridge()
+    bridge.driver_alive = lambda: True
+    client = TestClient(create_app(
+        bridge,
+        collection_root=root,
+        dataset_root="data/definitely_not_here",
+    ))
+    return client, bridge, session
+
+
+def test_curated_replay_uses_effective_range():
+    c, _, session = _curated_client()
+    session_id = session["id"]
+    listing = c.get(
+        f"/api/curation/sessions/{session_id}/episodes").json()
+    assert listing["episodes"][0]["effective_frames"] == 3
+
+    states = c.get(
+        f"/api/curation/episodes/{session_id}/0/states").json()
+    assert states["frames"] == 3
+
+    raw = c.get(
+        f"/api/curation/episodes/{session_id}/0/states?raw=true").json()
+    assert raw["frames"] == 6
+
+
+def test_physical_replay_accepts_stable_episode_reference():
+    from elrobot.web.curation import EpisodeRef
+    from elrobot.web.replay import PhysicalReplay
+
+    seen = []
+
+    class Library:
+        def actions(self, selection):
+            seen.append(selection)
+            return [[0.0] * 8]
+
+    player = PhysicalReplay(
+        Library(),
+        publish=lambda positions: None,
+        current_pose=lambda: {
+            f"rev_motor_{i:02d}": 0.0 for i in range(1, 9)
+        },
+        driver_alive=lambda: True,
+    )
+    ref = EpisodeRef("session_test", 2)
+    player.arm(True, False)
+    status = player.play(ref)
+    assert seen == [ref]
+    assert status["total"] == 1
+    player.stop()
+
+
+def test_curated_physical_replay_publishes_trimmed_actions():
+    c, bridge, session = _curated_client()
+    bridge.latest_q = {
+        f"rev_motor_{i:02d}": 0.2 for i in range(1, 9)
+    }
+    assert c.post(
+        "/api/replay/arm", json={"on": True}).json()["armed"] is True
+    result = c.post("/api/replay/play", json={
+        "session_id": session["id"],
+        "episode": 0,
+        "raw": False,
+        "speed": 1.0,
+    }).json()
+    assert result["total"] == 3
+    c.post("/api/replay/stop")
+    assert bridge.published
 
 
 def test_replay_lists_and_serves_recorded_episodes():
@@ -768,6 +862,9 @@ if __name__ == "__main__":
     test_physical_replay_disarms_when_last_client_disconnects()
     test_calib_start_reports_port_open_failure_cleanly()
     test_calib_full_flow_writes_table()
+    test_curated_replay_uses_effective_range()
+    test_physical_replay_accepts_stable_episode_reference()
+    test_curated_physical_replay_publishes_trimmed_actions()
     test_replay_lists_and_serves_recorded_episodes()
     test_replay_never_commands_the_arm()
     test_replay_reports_a_recorder_still_writing()
