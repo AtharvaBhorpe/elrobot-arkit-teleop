@@ -1,6 +1,6 @@
 # Collection and Curation Cockpit — Design
 
-**Date:** 2026-07-28  
+**Date:** 2026-07-28
 **Status:** Approved in brainstorming; ready for implementation planning
 
 ## Goal
@@ -69,6 +69,9 @@ data/collections/
     └── <export-name>-v001/    # One immutable curated LeRobot v3 dataset
 ```
 
+`data/collections` is the default and is configurable as one collection root so
+tests and alternate storage volumes do not require changing individual paths.
+
 Stable raw episode identity is:
 
 ```
@@ -94,6 +97,9 @@ Owns the in-memory catalog and serializes it to `catalog.json`.
   replaces the prior catalog.
 - Serializes all writes through one process lock.
 - Validates referential integrity before committing a change.
+- Stores a write-ahead marker containing the selected task identity before an
+  episode can be saved, then clears it only after the saved raw episode and catalog
+  record agree.
 - Retains source task assignment separately from the effective curated assignment.
 - Provides reset operations for review, reassignment, trim, and notes; no raw-file
   mutation is needed to undo curation.
@@ -223,7 +229,9 @@ An episode curation overlay is equivalent to:
    external camera, joint state, and joint command streams.
 4. While recording, task and session controls are locked.
 5. `Stop & keep` stops sampling and completes `save_episode()` before reporting
-   success.
+   success. The write-ahead marker makes a completed save recoverable if the process
+   fails before the following catalog update. Here, "keep" means retain the raw take;
+   its curation review state is initially `unreviewed`.
 6. `Discard` clears the unfinished episode buffer and returns to the ready state.
 7. Between episodes the operator may choose another saved task.
 8. `Finish session` is disabled while recording. It finalizes the dataset, validates
@@ -304,6 +312,12 @@ existing WebSocket state broadcast rather than optimistically assuming success.
 - `POST /api/collection/episode/discard`
 - `POST /api/collection/session/finish`
 
+### Recovery
+
+- `GET /api/collection/recovery`
+- `POST /api/collection/recovery/{session_id}/finish`
+- `POST /api/collection/recovery/{session_id}/archive`
+
 ### Curation
 
 - `GET /api/curation/sessions`
@@ -321,12 +335,16 @@ Unprocessable Entity`.
 
 The existing `/api/record` endpoint temporarily delegates compatible
 start/stop/discard commands to `CollectionManager` so the migration can be
-incremental. It is not a second recorder path.
+incremental. It requires an active collection session and never creates one
+implicitly. It is not a second recorder path.
 
 ## Failure handling and recovery
 
-Each session writes its lifecycle marker before dataset creation. Each successful
-episode save is recorded in the catalog only after `save_episode()` returns.
+Each session writes its lifecycle marker before dataset creation. Starting an episode
+atomically records a pending marker containing its source task ID and instruction
+snapshot. Each successful episode save is recorded in the catalog only after
+`save_episode()` returns; the pending marker is cleared only after that catalog write
+succeeds.
 
 On graceful cockpit shutdown:
 
@@ -341,9 +359,13 @@ After an unclean process or machine failure:
 - The session is not shown as finalized.
 - Startup exposes `Recover & finish` and `Archive incomplete session`.
 
-Recovery resumes the raw LeRobot dataset, validates saved episodes, finalizes it, and
-then marks it ready. Archiving hides an incomplete session without deleting its
-files.
+Recovery resumes the raw LeRobot dataset and compares its saved episode count with the
+catalog. If the dataset contains one completed episode not yet catalogued, the
+write-ahead marker supplies its stable task identity. If no new saved episode exists,
+the pending marker represents the lost in-memory take and is cleared with an explicit
+warning. Recovery then validates the saved episodes, finalizes the dataset, and marks
+it ready. Any other count mismatch is treated as a repair-required error rather than
+guessed. Archiving hides an incomplete session without deleting its files.
 
 Missing or stale input streams prevent episode start. During recording, stream
 health, accepted frame count, and frame-skip warnings remain visible. Disk or encoder
