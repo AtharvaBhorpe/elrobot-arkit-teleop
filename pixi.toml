@@ -51,7 +51,7 @@ elrobot = { path = ".", editable = true }
 # all four stacks import in one process (the M0/M2 prerequisite gate)
 prove-env = "python -m elrobot.tools.prove_env"
 # every offline suite: stub-bus driver safety, IK self-test, dataset, fake-phone pipeline, web API, calib steps
-test = "python tests/test_driver_safety.py && python -m elrobot.control.cartesian_ik && python tests/test_recorder.py && python tests/test_m2_pipeline.py && python tests/test_web_api.py && python tests/test_calib_steps.py && python tests/test_collection.py"
+test = "python tests/test_driver_safety.py && python -m elrobot.control.cartesian_ik && python tests/test_recorder.py && python tests/test_m2_pipeline.py && python tests/test_web_api.py && python tests/test_calib_steps.py && python tests/test_collection.py && python tests/test_export.py"
 lint = "ruff check src/ tests/ launch/"
 
 # ── drive the REAL arm ─────────────────────────────────────────────────

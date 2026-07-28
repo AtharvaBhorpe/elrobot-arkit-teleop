@@ -652,6 +652,44 @@ def test_curated_physical_replay_publishes_trimmed_actions():
     assert bridge.published
 
 
+def test_export_api_previews_starts_and_reports_status():
+    class FakeExports:
+        def preview(self, name, task_ids):
+            return {
+                "name": "training",
+                "next_version": 1,
+                "kept_episodes": 2,
+                "frames": 90,
+                "seconds": 3.0,
+            }
+
+        def start(self, name, task_ids):
+            return {"id": "export_test", "state": "queued"}
+
+        def status(self, export_id):
+            if export_id != "export_test":
+                from elrobot.web.export import ExportError
+                raise ExportError("unknown export")
+            return {
+                "id": export_id,
+                "state": "complete",
+                "root": "/tmp/training-v001",
+            }
+
+    c = TestClient(create_app(
+        FakeBridge(),
+        collection_root=Path(tempfile.mkdtemp()) / "collections",
+        export_service=FakeExports(),
+    ))
+    body = {"name": "Training", "task_ids": ["task_a"]}
+    assert c.post("/api/exports/preview", json=body).json()[
+        "kept_episodes"] == 2
+    started = c.post("/api/exports", json=body).json()
+    assert started["id"] == "export_test"
+    assert c.get("/api/exports/export_test").json()["state"] == "complete"
+    assert c.get("/api/exports/missing").status_code == 422
+
+
 def test_replay_lists_and_serves_recorded_episodes():
     """Replay reads back what episode_recorder wrote, on a dataset this test
     builds itself."""
@@ -865,6 +903,7 @@ if __name__ == "__main__":
     test_curated_replay_uses_effective_range()
     test_physical_replay_accepts_stable_episode_reference()
     test_curated_physical_replay_publishes_trimmed_actions()
+    test_export_api_previews_starts_and_reports_status()
     test_replay_lists_and_serves_recorded_episodes()
     test_replay_never_commands_the_arm()
     test_replay_reports_a_recorder_still_writing()

@@ -34,6 +34,7 @@ from elrobot.web.calib import CalibError, CalibSession
 from elrobot.web.collection import CatalogError, CollectionCatalog
 from elrobot.web.collection_manager import CollectionError, CollectionManager
 from elrobot.web.curation import CuratedReplayLibrary, EpisodeRef
+from elrobot.web.export import ExportError, ExportService
 from elrobot.web.replay import PhysicalReplay, ReplayError, ReplayLibrary
 
 JOINTS = ARM_JOINTS + [GRIPPER_JOINT]
@@ -173,7 +174,8 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
                backup_root=backup.DEFAULT_ROOT,
                collection_root=DEFAULT_COLLECTION_ROOT,
                recorder_factory=None,
-               dataset_validator=None) -> FastAPI:
+               dataset_validator=None,
+               export_service=None) -> FastAPI:
     calib = CalibSession(bus_factory=bus_factory, port=port,
                          backup_root=backup_root)
     catalog = CollectionCatalog(collection_root)
@@ -199,6 +201,7 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
             bridge, "external_recorder_alive", lambda: False),
         dataset_validator=dataset_validator,
     )
+    exports = export_service or ExportService(catalog)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -212,11 +215,18 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
     app.state.player = player
     app.state.catalog = catalog
     app.state.collection = manager
+    app.state.exports = exports
 
     def collection_call(command, *args, **kwargs):
         try:
             return command(*args, **kwargs)
         except (CatalogError, CollectionError) as exc:
+            raise HTTPException(exc.code, exc.detail) from exc
+
+    def export_call(command, *args, **kwargs):
+        try:
+            return command(*args, **kwargs)
+        except ExportError as exc:
             raise HTTPException(exc.code, exc.detail) from exc
 
     def driver_ready() -> bool:
@@ -390,6 +400,28 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
     @app.post("/api/collection/recovery/{session_id}/archive")
     def collection_recovery_archive(session_id: str):
         return collection_call(manager.recover_archive, session_id)
+
+    # ---- immutable curated exports --------------------------------------
+
+    @app.post("/api/exports/preview")
+    def export_preview(body: dict):
+        return export_call(
+            exports.preview,
+            body.get("name", ""),
+            body.get("task_ids", []),
+        )
+
+    @app.post("/api/exports")
+    def export_start(body: dict):
+        return export_call(
+            exports.start,
+            body.get("name", ""),
+            body.get("task_ids", []),
+        )
+
+    @app.get("/api/exports/{export_id}")
+    def export_status(export_id: str):
+        return export_call(exports.status, export_id)
 
     # ---- curated collection replay ---------------------------------------
 
