@@ -26,9 +26,10 @@ NAMES.forEach((n) => {
   const row = document.createElement("div");
   row.className = "joint";
   const [lo, hi] = LIM[n] ?? [-1.8, 1.8];
-  row.innerHTML = `<label>${n}</label>
-    <input type="range" min="${lo}" max="${hi}" step="0.005" value="0">
-    <output>0.00</output>`;
+  const id = `joint-${n}`;
+  row.innerHTML = `<label for="${id}">${n}</label>
+    <input id="${id}" type="range" min="${lo}" max="${hi}" step="0.005" value="0">
+    <output for="${id}">0.00</output>`;
   rail.appendChild(row);
   const inp = row.querySelector("input"), out = row.querySelector("output");
   inp.addEventListener("input", () => {
@@ -158,18 +159,25 @@ function setPill(id, ok, text) {
   p.querySelector("span:last-child").textContent = text;
 }
 
-// Calibrate / Record are independent toggles, not tabs: the cameras and the
-// 3D view are always on screen, and these panels open below them on demand.
-const deck = document.querySelector(".deck");
-document.querySelectorAll(".toggles button[data-panel]").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    const panel = document.getElementById(`panel-${btn.dataset.panel}`);
-    const open = !panel.classList.contains("active");
-    panel.classList.toggle("active", open);
-    btn.setAttribute("aria-pressed", String(open));
-    // data-open drives the "Toggle Calibrate or Record above" hint
-    deck.toggleAttribute("data-open",
-      deck.querySelectorAll(".panel.active").length > 0);
+// Calibration and replay are mutually exclusive operator workflows.
+const deckTabs = [...document.querySelectorAll(".toggles [role=tab]")];
+function selectDeckTab(selected) {
+  for (const tab of deckTabs) {
+    const active = tab === selected;
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+    document.getElementById(tab.getAttribute("aria-controls")).hidden = !active;
+  }
+}
+deckTabs.forEach((tab, i) => {
+  tab.addEventListener("click", () => selectDeckTab(tab));
+  tab.addEventListener("keydown", (e) => {
+    const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const next = deckTabs[(i + step + deckTabs.length) % deckTabs.length];
+    selectDeckTab(next);
+    next.focus();
   });
 });
 
@@ -377,8 +385,10 @@ recordEl.discard.addEventListener("click", () => recordCmd("discard"));
 function pollCamera(name) {
   const img = document.getElementById(`cam-${name}`);
   let lastUrl = null;
+  let busy = false;
   async function tick() {
-    if (replay.active) return;    // panels are showing recorded frames
+    if (busy || replay.active || document.hidden) return;
+    busy = true;
     try {
       const blob = await fetch(`/cam/${name}/frame`).then((r) => r.blob());
       const url = URL.createObjectURL(blob);
@@ -387,6 +397,8 @@ function pollCamera(name) {
       lastUrl = url;
     } catch {
       // transient fetch failure - next tick retries, no need to surface it
+    } finally {
+      busy = false;
     }
   }
   tick();
@@ -506,7 +518,9 @@ function playReplay() {
   rEl.play.textContent = "Pause";
   rEl.stop.disabled = false;
   replay.timer = setInterval(() => {
-    if (replay.frame >= replay.states.length - 1) { stopReplay(); return; }
+    if (replay.frame >= replay.states.length - 1) {
+      stopReplay(); showFrame(0); return;
+    }
     showFrame(replay.frame + 1);
   }, 1000 / replay.fps);
 }

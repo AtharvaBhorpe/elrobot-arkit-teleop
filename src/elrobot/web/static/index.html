@@ -10,22 +10,26 @@
   <header>
     <div class="brand">Elrobot Cockpit</div>
     <div class="pills">
-      <div class="pill" id="pill-driver">
-        <div class="dot"></div>
-        <span>driver</span>
+      <div class="pill" id="pill-driver" aria-live="polite">
+        <div class="dot warn"></div>
+        <span>driver unknown</span>
       </div>
-      <div class="pill" id="pill-age">
-        <div class="dot"></div>
-        <span>state</span>
+      <div class="pill" id="pill-age" aria-live="polite">
+        <div class="dot warn"></div>
+        <span>state unknown</span>
       </div>
     </div>
     <div class="spacer"></div>
-    <div class="switch-track" id="master" role="switch" aria-checked="false" tabindex="0">
-      <div class="switch-circle"></div>
+    <div class="control-switch">
+      <span>Web control</span>
+      <button class="switch-track" id="master" type="button" role="switch"
+              aria-label="Web control" aria-checked="false">
+        <span class="switch-circle"></span>
+      </button>
     </div>
   </header>
 
-  <div id="banner">Another commander is also live (phone/jog) — web control
+  <div id="banner" role="alert">Another commander is also live (phone/jog) — web control
     is NOT disabled, both command streams are being sent</div>
 
   <main>
@@ -34,13 +38,13 @@
       <div class="cams">
         <div class="card cam-card">
           <div class="cam-frame">
-            <img id="cam-wrist">
+            <img id="cam-wrist" alt="Wrist camera feed">
           </div>
           <div class="cam-label">wrist</div>
         </div>
         <div class="card cam-card">
           <div class="cam-frame">
-            <img id="cam-ext">
+            <img id="cam-ext" alt="External camera feed">
           </div>
           <div class="cam-label">ext</div>
         </div>
@@ -51,18 +55,17 @@
       </div>
     </div><!-- /.stage -->
 
-    <!-- Middle column: on-demand panels, toggled open from here -->
+    <!-- Middle column: one operator workflow at a time -->
     <div class="deck">
-      <div class="toggles">
-        <button id="toggle-calibrate" aria-pressed="false"
-                data-panel="calibrate">Calibrate</button>
-        <button id="toggle-record" aria-pressed="false"
-                data-panel="record">Record</button>
+      <div class="toggles" role="tablist" aria-label="Operator workflow">
+        <button id="tab-calibrate" role="tab" aria-selected="false"
+                aria-controls="panel-calibrate" tabindex="-1">Calibrate</button>
+        <button id="tab-replay" role="tab" aria-selected="true"
+                aria-controls="panel-replay">Replay</button>
       </div>
 
-      <p class="deck-hint muted">Toggle Calibrate or Record above.</p>
-
-    <div class="panel" id="panel-calibrate">
+    <div class="panel" id="panel-calibrate" role="tabpanel"
+         aria-labelledby="tab-calibrate" hidden>
       <div class="card" style="padding: 14px;">
         <p id="calib-status" class="muted" style="margin: 0 0 6px;">idle</p>
         <p id="calib-backup" class="muted" style="margin: 0 0 12px; font-size: 12px;
@@ -102,7 +105,8 @@
         </div>
       </dialog>
     </div>
-    <div class="panel" id="panel-record">
+    <div class="panel" id="panel-replay" role="tabpanel"
+         aria-labelledby="tab-replay">
       <div class="card" style="padding: 14px;">
         <div style="display: flex; align-items: baseline; gap: 8px;">
           <span style="font-size: 26px; font-weight: 600;" id="record-count">0</span>
@@ -154,7 +158,7 @@
           <button id="phys-stop" class="danger" disabled>STOP</button>
           <label class="muted" style="font-size: 12px;">speed
             <input id="phys-speed" type="number" min="0.1" max="1.0"
-                   step="0.1" value="0.5"
+                   step="0.1" value="0.6"
                    style="width: 62px; margin-left: 4px; padding: 4px;
                           border: 1px solid var(--border);
                           border-radius: var(--radius);

@@ -53,7 +53,8 @@ export function makeScene(el) {
   };
   new ResizeObserver(resize).observe(el); resize();
   (function loop() {
-    applyCam(); r.render(scene, cam); requestAnimationFrame(loop);
+    if (!document.hidden) { applyCam(); r.render(scene, cam); }
+    requestAnimationFrame(loop);
   })();
 
   return { setJoints(q) { if (robot) for (const [n, v] of Object.entries(q))

@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # for `stubs` below
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from elrobot.web.server import create_app
@@ -60,6 +61,7 @@ def test_status_reports_joints_and_flags():
 
 def test_control_toggle_and_seed():
     b = FakeBridge()
+    b.driver_alive = lambda: True
     c = TestClient(create_app(b))
     r = c.post("/api/control", json={"on": True})
     assert r.json()["control_on"] is True
@@ -69,8 +71,37 @@ def test_control_toggle_and_seed():
     assert b.control_on is False
 
 
+def test_control_requires_fresh_driver_state():
+    b = FakeBridge()
+    app = create_app(b)
+    control = next(r for r in app.routes if getattr(r, "path", None) == "/api/control")
+    for alive, stamp in ((False, time.monotonic()), (True, 0.0)):
+        b.driver_alive = lambda a=alive: a
+        b.latest_stamp = stamp
+        try:
+            control.endpoint({"on": True})
+        except HTTPException as e:
+            assert e.status_code == 409
+        else:
+            raise AssertionError("control enabled without a fresh driver state")
+        assert b.control_on is False
+
+
+def test_control_releases_when_driver_state_goes_stale():
+    b = FakeBridge()
+    b.driver_alive = lambda: True
+    b.latest_stamp = 0.0
+    b.control_on = True
+    app = create_app(b)
+    tab = object()
+    app.state.client_joined(tab)
+    assert app.state.may_command(tab) is False
+    assert b.control_on is False
+
+
 def test_ws_streams_state_and_gates_commands():
     b = FakeBridge()
+    b.driver_alive = lambda: True
     c = TestClient(create_app(b))
     with c.websocket_connect("/ws") as ws:
         first = ws.receive_json()
@@ -320,6 +351,7 @@ def test_only_first_ws_client_may_command():
     exercised directly. The single-client path through the real transport is
     covered by test_ws_streams_state_and_gates_commands."""
     b = FakeBridge()
+    b.driver_alive = lambda: True
     b.control_on = True
     app = create_app(b)
     tab_a, tab_b = object(), object()          # stand-ins for two sockets
@@ -349,6 +381,17 @@ def test_control_resets_when_last_client_disconnects():
     b.control_on = True
     app.state.client_gone(tab)
     assert b.control_on is False       # authoritative server-side reset
+
+
+def test_physical_replay_disarms_when_last_client_disconnects():
+    app = create_app(FakeBridge())
+    tab = object()
+    app.state.client_joined(tab)
+    app.state.player.armed = True
+    app.state.player.phase = "playing"
+    app.state.client_gone(tab)
+    assert app.state.player.status()["armed"] is False
+    assert app.state.player.status()["phase"] == "idle"
 
 
 def test_calib_start_reports_port_open_failure_cleanly():
@@ -627,6 +670,8 @@ def test_record_relays_valid_commands_only():
 if __name__ == "__main__":
     test_status_reports_joints_and_flags()
     test_control_toggle_and_seed()
+    test_control_requires_fresh_driver_state()
+    test_control_releases_when_driver_state_goes_stale()
     test_ws_streams_state_and_gates_commands()
     test_mjpeg_placeholder_when_no_camera()
     test_cam_frame_endpoint_returns_single_jpeg()
@@ -642,6 +687,7 @@ if __name__ == "__main__":
     test_record_status_goes_stale_when_recorder_dies()
     test_only_first_ws_client_may_command()
     test_control_resets_when_last_client_disconnects()
+    test_physical_replay_disarms_when_last_client_disconnects()
     test_calib_start_reports_port_open_failure_cleanly()
     test_calib_full_flow_writes_table()
     test_replay_lists_and_serves_recorded_episodes()

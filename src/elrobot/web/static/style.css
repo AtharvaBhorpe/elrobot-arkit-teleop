@@ -60,6 +60,11 @@
   box-sizing: border-box;
 }
 
+:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+
 html {
   font-family: var(--sans);
   font-size: 16px;
@@ -118,6 +123,14 @@ header {
   flex: 1;
 }
 
+.control-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
 .switch-track {
   display: inline-flex;
   align-items: center;
@@ -126,6 +139,8 @@ header {
   background-color: var(--muted);
   border-radius: 10px;
   padding: 2px;
+  border: 0;
+  box-shadow: none;
   cursor: pointer;
   transition: background-color 0.2s;
 }
@@ -178,23 +193,13 @@ main {
   min-height: 0;
 }
 
-/* Middle column: the toggle buttons and whatever panels they open */
+/* Middle column: one selected operator workflow */
 .deck {
   display: flex;
   flex-direction: column;
   gap: 10px;
   min-height: 0;
   overflow-y: auto;           /* panels scroll here, not the page */
-}
-
-.deck-hint {
-  margin: 4px 2px;
-  font-size: 12.5px;
-}
-
-/* Hidden once anything is open - JS sets data-open on .deck */
-.deck[data-open] .deck-hint {
-  display: none;
 }
 
 /* Both feeds side by side, always visible, above the 3D view. Height is
@@ -225,7 +230,7 @@ main {
   main {
     grid-template-columns: 1fr;
   }
-  .viewer {
+  .viewer.card {
     min-height: 380px;
   }
   .deck {
@@ -323,27 +328,31 @@ body:not([data-control]) .joint output {
   color: var(--muted-foreground);
 }
 
-/* Calibrate / Record toggle buttons - independent on/off, not tabs.
-   Cameras and the 3D view are always on screen; these open below them. */
+/* Segmented workflow tabs: compact and unmistakably mutually exclusive. */
 .toggles {
-  display: flex;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 4px);
+  background: var(--muted);
   flex: none;
 }
 
-.toggles button[aria-pressed="true"] {
+.toggles button {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.toggles button[aria-selected="true"] {
   background-color: var(--primary);
-  border-color: var(--primary);
   color: var(--primary-foreground);
 }
 
 .panel {
-  display: none;
-  flex: none;                 /* content height; .deck scrolls if both are open */
-}
-
-.panel.active {
-  display: block;
+  flex: none;
 }
 
 .cam-card {
@@ -405,6 +414,17 @@ button.primary {
 }
 
 button.primary:hover {
+  opacity: 0.9;
+}
+
+button.danger {
+  background-color: var(--destructive);
+  border-color: var(--destructive);
+  color: white;
+}
+
+button.danger:hover {
+  background-color: var(--destructive);
   opacity: 0.9;
 }
 

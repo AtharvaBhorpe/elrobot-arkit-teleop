@@ -163,6 +163,13 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
     )
     app.state.player = player
 
+    def driver_ready() -> bool:
+        return bool(
+            hasattr(bridge, "driver_alive")
+            and bridge.driver_alive()
+            and time.monotonic() - bridge.latest_stamp < STALE_S
+        )
+
     @app.get("/api/status")
     def status():
         alive = (bridge.driver_alive()
@@ -243,6 +250,8 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
         if want and player.armed:
             raise HTTPException(
                 409, "disarm replay first - it is holding /joint_command")
+        if want and not driver_ready():
+            raise HTTPException(409, "wait for a fresh driver state first")
         bridge.control_on = want
         return {"control_on": bridge.control_on,
                 "seed": dict(bridge.latest_q) if bridge.control_on else {}}
@@ -335,6 +344,8 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
         clients.append(sock)
 
     def may_command(sock) -> bool:
+        if bridge.control_on and not driver_ready():
+            bridge.control_on = False
         return bool(bridge.control_on and clients and clients[0] is sock)
 
     def client_gone(sock):
@@ -346,6 +357,7 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
         # tab found the server already "in control".
         if not clients:
             bridge.control_on = False
+            player.arm(False, False)
 
     app.state.clients = clients
     app.state.client_joined = client_joined
@@ -482,6 +494,7 @@ def main():
     import uvicorn
 
     app = create_app(WebBridge())
+    print("Cockpit: http://localhost:8080", flush=True)
     uvicorn.run(app, host="0.0.0.0", port=8080, log_level="warning")
 
 
