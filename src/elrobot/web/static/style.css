@@ -1,0 +1,922 @@
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --border: oklch(0.922 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --ok: oklch(0.65 0.17 150);
+  --warn: oklch(0.75 0.15 80);
+  --destructive: oklch(0.577 0.245 27.3);
+  --radius: 0.5rem;
+  --shadow: 0 1px 2px 0 rgb(0 0 0 / .05);
+  --sans: Inter, Geist, "Segoe UI", system-ui, sans-serif;
+  --mono: "Geist Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.205 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --border: oklch(1 0 0 / 10%);
+    --primary: oklch(0.87 0 0);
+    --primary-foreground: oklch(0.205 0 0);
+    --shadow: none;
+  }
+}
+
+:root[data-theme="dark"] {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --primary: oklch(0.87 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --shadow: none;
+}
+
+:root[data-theme="light"] {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --border: oklch(0.922 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --shadow: 0 1px 2px 0 rgb(0 0 0 / .05);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+
+html {
+  font-family: var(--sans);
+  font-size: 16px;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  line-height: 1.5;
+}
+
+header {
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+  flex: none;                 /* fixed height; main takes the rest */
+}
+
+.brand {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.pills {
+  display: flex;
+  gap: 8px;
+}
+
+.pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  background-color: var(--card);
+}
+
+.dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--ok);
+}
+
+.dot.warn {
+  background-color: var(--warn);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.control-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.switch-track {
+  display: inline-flex;
+  align-items: center;
+  width: 36px;
+  height: 20px;
+  background-color: var(--muted);
+  border-radius: 10px;
+  padding: 2px;
+  border: 0;
+  box-shadow: none;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+/* presence-based, not value-based: JS uses element.toggleAttribute("data-on", bool),
+   which sets the attribute to "" when present, not the literal string "true" */
+.switch-track[data-on] {
+  background-color: var(--primary);
+}
+
+.switch-circle {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background-color: var(--background);
+  transition: transform 0.2s;
+}
+
+.switch-track[data-on] .switch-circle {
+  transform: translateX(16px);
+}
+
+/* Everything fits one screen - no page scrolling. body is a flex column
+   pinned to the viewport height, and main is the single flex-growing row,
+   so the three columns share whatever height is left under the header. */
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+#workspace {
+  flex: 1;
+  min-height: 0;              /* lets children shrink instead of overflowing */
+  display: grid;
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+#workspace[data-mode="teleop"] {
+  grid-template-columns: minmax(0, 1fr) 340px 300px;
+}
+
+#workspace[data-mode="curate"] {
+  grid-template-columns: 280px minmax(0, 1fr) 320px;
+}
+
+#workspace[data-mode="curate"] .deck,
+#workspace[data-mode="curate"] .rail {
+  display: none;
+}
+
+#workspace[data-mode="teleop"] .curate-left,
+#workspace[data-mode="teleop"] .curate-right {
+  display: none;
+}
+
+/* Shared visual stage: cameras above the 3D viewer and joint history */
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+/* Middle column: one selected operator workflow */
+.deck {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;           /* panels scroll here, not the page */
+}
+
+/* Both feeds side by side, always visible, above the 3D view. Height is
+   viewport-relative so the 3D view keeps the bulk of the space on tall
+   screens without the cameras collapsing to nothing on short ones. */
+.cams {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  height: clamp(160px, 31vh, 360px);
+}
+
+.viewer {
+  flex: 1;
+  min-height: 0;
+}
+
+.visual-row {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(240px, 2fr);
+  gap: 10px;
+}
+
+.joint-plot-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px;
+}
+
+.plot-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+
+#joint-plot {
+  flex: 1;
+  min-height: 180px;
+  height: 0 !important;       /* canvas backing size must not grow the flex row */
+  touch-action: none;
+}
+
+.plot-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+}
+
+.plot-legend-item {
+  padding: 3px 7px;
+  color: var(--muted-foreground);
+  border-color: var(--joint-color);
+  box-shadow: none;
+  font-size: 11px;
+}
+
+.plot-legend-item[aria-pressed="true"] {
+  color: var(--foreground);
+  border-bottom: 3px solid var(--joint-color);
+}
+
+.plot-legend-item[aria-pressed="false"] {
+  opacity: 0.4;
+}
+
+/* Narrow screens: fall back to scrolling rather than crushing everything */
+/* 1fr stage + 340 deck + 300 rail + gaps/padding needs ~1100px to still
+   make sense; below that stack into one scrolling column. Kept at 1200 so
+   the three columns survive with DevTools docked open on a 2K screen. */
+@media (max-width: 1200px) {
+  html, body {
+    height: auto;
+    overflow: auto;
+  }
+  #workspace,
+  #workspace[data-mode="teleop"],
+  #workspace[data-mode="curate"] {
+    grid-template-columns: 1fr;
+  }
+  .viewer.card {
+    height: 380px;
+    min-height: 380px;
+  }
+  .visual-row {
+    grid-template-columns: 1fr;
+  }
+  .joint-plot-card {
+    height: 300px;
+    min-height: 300px;
+  }
+  .deck {
+    overflow-y: visible;      /* page scrolls in this mode, not the column */
+  }
+  .curate-left,
+  .curate-right {
+    overflow: visible;
+  }
+}
+
+.card {
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 4px);
+  box-shadow: var(--shadow);
+  min-height: 0;              /* grid children must be allowed to shrink */
+}
+
+#scene3d {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* Joints rail: heading stays put, only the slider list scrolls if the
+   8 joints don't fit the available height */
+.rail {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.rail-title {
+  margin: 0;
+  padding: 14px 16px 10px;
+  font-size: 14px;
+  font-weight: 600;
+  flex: none;
+}
+
+#joints {
+  padding: 0 16px 16px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Compact two-line row (label + value on one line, slider under it) so all
+   8 joints fit the rail without scrolling on a normal screen */
+.joint {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 2px;
+  margin-bottom: 8px;
+}
+
+/* Explicit grid placement: the DOM order is label, input, output (see
+   app.js), but we want label+output side by side on row 1 and the slider
+   spanning row 2 - auto-placement would give the full-width input its own
+   row before the output and push output down to a third row. */
+.joint label {
+  grid-row: 1;
+  grid-column: 1;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  font-family: var(--mono);
+}
+
+.joint output {
+  grid-row: 1;
+  grid-column: 2;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.joint input[type="range"] {
+  grid-row: 2;
+  grid-column: 1 / -1;        /* slider spans under label and value */
+  width: 100%;
+  height: 16px;
+  margin: 0;
+}
+
+/* monitor mode (default): sliders track the real arm, inert and dimmed.
+   Web control ON sets data-control on <body> and the sliders go live. */
+body:not([data-control]) .joint input {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+body:not([data-control]) .joint output {
+  color: var(--muted-foreground);
+}
+
+/* Segmented workflow tabs: compact and unmistakably mutually exclusive. */
+.toggles,
+.mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 4px);
+  background: var(--muted);
+  flex: none;
+}
+
+.toggles button,
+.mode-switch button {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.toggles button[aria-selected="true"],
+.mode-switch button[aria-selected="true"] {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.panel {
+  flex: none;
+}
+
+.cam-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;              /* grid child of .cams; height comes from the row */
+  overflow: hidden;
+}
+
+.cam-frame {
+  background: #111;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.cam-frame img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;        /* Show the WHOLE frame, gutters and all. Not
+                                 'cover': cropping would mean the operator
+                                 composes grasps from a narrower view than the
+                                 recorder actually saves, so what you see here
+                                 would not match what a policy trains on. */
+}
+
+.cam-label {
+  flex: none;
+  padding: 6px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+button {
+  border: 1px solid var(--border);
+  background-color: var(--card);
+  border-radius: var(--radius);
+  padding: 9px 16px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 14px;
+  color: var(--foreground);
+  transition: all 0.2s;
+}
+
+button:hover {
+  background-color: var(--muted);
+}
+
+button.primary {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+}
+
+button.primary:hover {
+  opacity: 0.9;
+}
+
+button.danger {
+  background-color: var(--destructive);
+  border-color: var(--destructive);
+  color: white;
+}
+
+button.danger:hover {
+  background-color: var(--destructive);
+  opacity: 0.9;
+}
+
+canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.muted {
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+/* inline error text (e.g. the calibration wizard's 409 while the driver
+   is running) - read in place instead of in a browser alert() */
+.err {
+  color: var(--destructive);
+  font-weight: 500;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+dialog::backdrop {
+  background: color-mix(in srgb, var(--foreground) 30%, transparent);
+}
+
+dialog {
+  background-color: var(--card);
+  color: var(--foreground);
+}
+
+.sign-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+}
+
+.sign-row.flipped {
+  border-color: var(--warn);
+}
+
+#banner {
+  display: none;
+  background-color: var(--destructive);
+  color: var(--background);
+  padding: 7px 16px;
+  text-align: center;
+  font-size: 12.5px;
+  font-weight: 500;
+  flex: none;                 /* appears/disappears without resizing main */
+}
+
+#banner.show {
+  display: block;
+}
+
+/* Web-control switch while physical replay holds /joint_command: it is not
+   available, and the click handler explains why. */
+.switch-track.blocked {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mode-switch {
+  width: 168px;
+  flex: none;
+}
+
+.mode-switch button,
+.toggles button {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.panel-card {
+  padding: 16px;
+}
+
+.panel-card + .panel-card {
+  margin-top: 10px;
+}
+
+.section-heading,
+.sidebar-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.section-heading h2,
+.sidebar-heading h2,
+.modal h2 {
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.section-heading h3,
+.physical-replay h3,
+.review-player h3 {
+  font-size: 13px;
+}
+
+.eyebrow {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.state-badge {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.button-row,
+.review-actions,
+.collection-actions,
+.dialog-actions,
+.field-action,
+.check-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.collection-actions {
+  margin-top: 16px;
+}
+
+.review-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin: 12px 0;
+}
+
+.review-actions button {
+  padding-inline: 8px;
+}
+
+.full {
+  width: 100%;
+}
+
+.compact {
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.text-button {
+  border: 0;
+  padding: 5px 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.panel-card label,
+.curate-right label,
+.modal label,
+.modal legend {
+  display: block;
+  margin-top: 12px;
+  margin-bottom: 5px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+input[type="text"],
+input[type="number"],
+select,
+textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 9px;
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 13px;
+}
+
+textarea {
+  resize: vertical;
+}
+
+.field-action {
+  flex-wrap: nowrap;
+}
+
+.field-action select {
+  min-width: 0;
+}
+
+.hidden-note {
+  display: none;
+  margin-bottom: 12px;
+}
+
+.status-pre {
+  margin-top: 12px;
+  white-space: pre-wrap;
+}
+
+.recovery-card {
+  font-size: 12px;
+}
+
+.recovery-item {
+  border-top: 1px solid var(--border);
+  padding: 10px 0;
+}
+
+.curate-left,
+.curate-right {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+}
+
+.curate-left {
+  display: flex;
+  flex-direction: column;
+}
+
+.task-groups {
+  display: flex;
+  gap: 6px;
+  padding-bottom: 10px;
+  overflow-x: auto;
+}
+
+.task-group {
+  flex: none;
+  padding: 5px 9px;
+  font-size: 11px;
+}
+
+.task-group[aria-pressed="true"],
+.episode-item[aria-current="true"] {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.episode-list {
+  min-height: 0;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+}
+
+.episode-item {
+  width: 100%;
+  margin-top: 8px;
+  padding: 9px;
+  text-align: left;
+  box-shadow: none;
+}
+
+.episode-item strong,
+.episode-item span {
+  display: block;
+}
+
+.episode-item span {
+  margin-top: 2px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.episode-item[aria-current="true"] span {
+  color: var(--primary-foreground);
+  opacity: 0.75;
+}
+
+.empty-state {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 20px 12px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  text-align: center;
+}
+
+.trim-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.check-row {
+  margin: 14px 0;
+  font-weight: 500 !important;
+}
+
+.check-row input {
+  width: auto;
+}
+
+.review-player,
+.physical-replay {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.review-player input[type="range"] {
+  width: 100%;
+  margin: 4px 0 8px;
+}
+
+.physical-replay p,
+#replay-status,
+#phys-status,
+#collection-status {
+  margin-top: 8px;
+}
+
+.modal {
+  width: min(92vw, 440px);
+  max-height: 86vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 4px);
+  padding: 20px;
+}
+
+.modal form > p {
+  margin-top: 8px;
+}
+
+.modal fieldset {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+}
+
+.modal fieldset label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 5px 0;
+  font-weight: 500;
+}
+
+.modal fieldset input {
+  width: auto;
+}
+
+.dialog-actions {
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.dialog-actions.split {
+  flex-wrap: nowrap;
+}
+
+.export-summary {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+@media (max-width: 700px) {
+  header {
+    flex-wrap: wrap;
+  }
+  .pills {
+    order: 3;
+    width: 100%;
+  }
+  .mode-switch {
+    width: 148px;
+  }
+  #workspace {
+    padding: 8px;
+  }
+  .cams {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+  .cam-card {
+    min-height: 180px;
+  }
+  .trim-grid {
+    grid-template-columns: 1fr;
+  }
+}
