@@ -159,6 +159,14 @@ class Recorder(Node):
         })
         self.n_frames += 1
 
+    def set_task(self, instruction: str) -> None:
+        if self.recording or self._starting:
+            raise RuntimeError("task is locked while an episode is active")
+        instruction = instruction.strip()
+        if not instruction:
+            raise ValueError("task instruction cannot be blank")
+        self.args.task = instruction
+
     def start(self):
         # Wait for EVERY stream to be live and fresh before arming, on every
         # episode - not just the first. The old loop was `while self.dataset
@@ -166,7 +174,8 @@ class Recorder(Node):
         # 2 onward armed blind. Observed exactly that - "RECORDING" logged
         # while /joint_command had been silent for 141 s, then every frame
         # skipped and "nothing recorded, nothing saved".
-        deadline = time.monotonic() + 10.0
+        deadline = time.monotonic() + getattr(
+            self.args, "start_timeout", 10.0)
         while True:
             s, why = self._sample()
             if s is not None:
@@ -175,7 +184,7 @@ class Recorder(Node):
                 self.get_logger().error(
                     f"cannot start: {why}. Is the driver/teleop running "
                     f"(action = /joint_command) and are both cameras up?")
-                return
+                return False
             time.sleep(0.1)
 
         # Dataset creation takes seconds (video encoder setup) - do it HERE,
@@ -186,6 +195,7 @@ class Recorder(Node):
         self.recording = True
         self.n_frames = 0
         self.get_logger().info("RECORDING - ENTER to stop")
+        return True
 
     def stop(self):
         self.recording = False
@@ -197,8 +207,10 @@ class Recorder(Node):
             self.episodes += 1
             self.get_logger().info(
                 f"episode saved ({frames} frames, {elapsed:.2f}s)")
+            return frames
         else:
             self.get_logger().warning("nothing recorded, nothing saved")
+            return 0
 
     def discard(self):
         self.recording = False

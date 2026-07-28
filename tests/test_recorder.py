@@ -17,6 +17,7 @@ import json
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -26,7 +27,7 @@ import rclpy
 from sensor_msgs.msg import Image, JointState
 
 from elrobot.control.cartesian_ik import ARM_JOINTS, GRIPPER_JOINT, JAW_MIMIC  # noqa: E402
-from elrobot.nodes.episode_recorder import positive_int  # noqa: E402
+from elrobot.nodes.episode_recorder import Recorder, positive_int  # noqa: E402
 
 ROOT = Path("data/test_episodes")
 JOINTS = ARM_JOINTS + [GRIPPER_JOINT]
@@ -132,8 +133,6 @@ def test_record_cmd_topic():
     """
     from std_msgs.msg import String
 
-    from elrobot.nodes.episode_recorder import Recorder
-
     root = Path("data/test_episodes_cmd")
     if root.exists():
         shutil.rmtree(root)
@@ -175,6 +174,12 @@ def test_record_cmd_topic():
         assert node.recording, "recorder never started via /record/cmd"
         assert node.dataset._encoder_threads == 2
         assert node.dataset.writer._streaming_encoder is not None
+        try:
+            node.set_task("changed during recording")
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("task changed during an active episode")
 
         # _status_tick fires once per second - hold recording comfortably
         # past that so at least one /record/status message is captured
@@ -195,6 +200,8 @@ def test_record_cmd_topic():
         while node.episodes < 1 and time.monotonic() < deadline:
             time.sleep(0.05)
         assert node.episodes == 1, "save_episode() never completed in time"
+        node.set_task("second task")
+        assert node.args.task == "second task"
 
         time.sleep(1.2)   # let one more /record/status tick land
         assert any(s["recording"] for s in statuses), (
@@ -206,6 +213,26 @@ def test_record_cmd_topic():
     finally:
         rclpy.try_shutdown()
     print("/record/cmd + /record/status PASSED")
+
+
+def test_start_reports_failure_without_streams():
+    root = Path(tempfile.mkdtemp()) / "missing"
+    args = argparse.Namespace(
+        fps=30.0,
+        repo_id="local/missing",
+        root=str(root),
+        task="test",
+        encoder_threads=2,
+        start_timeout=0.05,
+    )
+    rclpy.init()
+    node = Recorder(args)
+    try:
+        assert node.start() is False
+        assert node.recording is False
+    finally:
+        node.destroy_node()
+        rclpy.try_shutdown()
 
 
 def test_second_run_resumes_existing_dataset():
@@ -252,6 +279,7 @@ def test_second_run_resumes_existing_dataset():
 
 def main():
     test_encoder_configuration()
+    test_start_reports_failure_without_streams()
     test_subprocess_auto_episode()
     test_second_run_resumes_existing_dataset()
     test_record_cmd_topic()
