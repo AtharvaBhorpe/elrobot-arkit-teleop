@@ -196,10 +196,10 @@ available again.
 
 ![Choose a task, name the session, start collection, then finish](assets/cockpit-collect-workflow.gif)
 
-*Select the episode task, name the session, press **Start collection**, and
-finish when the session is complete. This offline walkthrough finishes an
-empty demonstration session; with the driver and cameras live, use **Record
-episode** followed by **Stop & keep** or **Discard** between those steps.*
+*Create a reusable task, name the session, record a demonstration, save it
+with **Stop & keep**, and finish the session. The walkthrough uses isolated
+synthetic camera and joint streams on ROS domain 77; it records a real local
+episode without commanding hardware.*
 
 1. Choose a saved task and optionally name the session.
 2. Press **Start collection**. One session may hold episodes from several
@@ -232,9 +232,9 @@ instant of a hard crash cannot be recovered.
 
 ![Filter episodes, compare raw and trimmed views, then change the review decision](assets/cockpit-curate-workflow.gif)
 
-*Filter by task, select an episode, compare the curated range with untouched
-raw data, and change the reversible review decision. The final frame restores
-the take to **Keep**.*
+*Filter by task, select and visually replay the take, enter a trim, compare
+the untouched raw episode, save a note, then exercise the reversible
+**Reject** → **Keep** review path. The final kept range is ready for export.*
 
 Open **Curate**, choose a task group, then an episode. Review decisions mean:
 
@@ -293,9 +293,10 @@ misplaced object.
 
 ![Select kept task groups and validate a versioned LeRobot export](assets/cockpit-export-workflow.gif)
 
-*Open export, name the dataset, choose kept task groups, and validate the
-preview before starting the background export. This walkthrough stops before
-**Start export**, so it does not create an output dataset.*
+*Open export, name the dataset, choose the kept task group, validate the
+episode/frame/duration preview, start the background job, and wait for the
+immutable version to complete. The walkthrough writes only to its temporary
+synthetic collection root.*
 
 Only explicitly kept episodes are exportable. Press **Export kept episodes…**,
 choose one or more task groups, name the dataset, and **Validate selection**.
