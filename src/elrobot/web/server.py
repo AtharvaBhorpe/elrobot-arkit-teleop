@@ -25,7 +25,13 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 
 from elrobot.calibration import backup
@@ -35,7 +41,7 @@ from elrobot.web.collection import CatalogError, CollectionCatalog
 from elrobot.web.collection_manager import CollectionError, CollectionManager
 from elrobot.web.curation import CuratedReplayLibrary, EpisodeRef
 from elrobot.web.export import ExportError, ExportService
-from elrobot.web.replay import PhysicalReplay, ReplayError, ReplayLibrary
+from elrobot.web.replay import PhysicalReplay, ReplayError
 
 JOINTS = ARM_JOINTS + [GRIPPER_JOINT]
 STALE_S = 1.0
@@ -47,11 +53,6 @@ RECORD_STALE_S = 3.0
 # Same PORT env knob every other task honours - this arm has already moved
 # from ttyACM0 to ttyACM1 once after a replug.
 DEFAULT_PORT = os.environ.get("PORT", "/dev/ttyACM0")
-# Same default --root episode_recorder writes to, so the replay panel finds
-# the episodes you just recorded without extra configuration.
-DEFAULT_DATASET_ROOT = os.environ.get(
-    "DATASET_ROOT", "data/episodes/elrobot_teleop")
-DEFAULT_REPO_ID = os.environ.get("REPO_ID", "local/elrobot_teleop")
 DEFAULT_COLLECTION_ROOT = os.environ.get(
     "COLLECTION_ROOT", "data/collections")
 
@@ -97,7 +98,6 @@ class WebBridge:
                 Image, topic,
                 lambda m, n=name: self._on_img(m, n), 1)
         self.node.create_subscription(String, "/record/status", self._on_record, 1)
-        self._record_pub = self.node.create_publisher(String, "/record/cmd", 1)
         self._pub = self.node.create_publisher(JointState, "/joint_command", 1)
         from rclpy.executors import MultiThreadedExecutor
 
@@ -115,10 +115,6 @@ class WebBridge:
         import json
         self.record_status = json.loads(msg.data)
         self.record_stamp = time.monotonic()
-
-    def publish_record_cmd(self, cmd: str):
-        from std_msgs.msg import String
-        self._record_pub.publish(String(data=cmd))
 
     def record_status_fresh(self):
         """None once /record/status goes quiet. The recorder publishes at
@@ -169,8 +165,6 @@ class WebBridge:
 
 
 def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
-               dataset_root=DEFAULT_DATASET_ROOT,
-               repo_id=DEFAULT_REPO_ID,
                backup_root=backup.DEFAULT_ROOT,
                collection_root=DEFAULT_COLLECTION_ROOT,
                recorder_factory=None,
@@ -179,8 +173,7 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
     calib = CalibSession(bus_factory=bus_factory, port=port,
                          backup_root=backup_root)
     catalog = CollectionCatalog(collection_root)
-    legacy_library = ReplayLibrary(root=dataset_root, repo_id=repo_id)
-    library = CuratedReplayLibrary(catalog, legacy=legacy_library)
+    library = CuratedReplayLibrary(catalog)
     player = PhysicalReplay(
         library,
         publish=bridge.publish_command,
@@ -210,24 +203,17 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
 
     app = FastAPI(title="elrobot cockpit", lifespan=lifespan)
     app.state.bridge = bridge
-    app.state.library = legacy_library
     app.state.curated_library = library
     app.state.player = player
     app.state.catalog = catalog
     app.state.collection = manager
     app.state.exports = exports
 
-    def collection_call(command, *args, **kwargs):
-        try:
-            return command(*args, **kwargs)
-        except (CatalogError, CollectionError) as exc:
-            raise HTTPException(exc.code, exc.detail) from exc
+    def coded_error(_, exc):
+        return JSONResponse(status_code=exc.code, content={"detail": exc.detail})
 
-    def export_call(command, *args, **kwargs):
-        try:
-            return command(*args, **kwargs)
-        except ExportError as exc:
-            raise HTTPException(exc.code, exc.detail) from exc
+    for error in (CalibError, CatalogError, CollectionError, ExportError, ReplayError):
+        app.add_exception_handler(error, coded_error)
 
     def driver_ready() -> bool:
         return bool(
@@ -236,39 +222,18 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
             and time.monotonic() - bridge.latest_stamp < STALE_S
         )
 
-    @app.get("/api/status")
-    def status():
-        alive = (bridge.driver_alive()
-                 if hasattr(bridge, "driver_alive") else False)
-        return {
-            "driver_alive": alive,
-            "control_on": bridge.control_on,
-            "commanders": bridge.commanders(),
-            "joints": bridge.latest_q,
-            "age_s": time.monotonic() - bridge.latest_stamp,
-        }
-
     @app.post("/api/calib/start")
     def calib_start():
         alive = bridge.driver_alive() if hasattr(bridge, "driver_alive") else False
-        try:
-            return calib.start(alive)
-        except CalibError as e:
-            raise HTTPException(e.code, e.detail) from e
+        return calib.start(alive)
 
     @app.post("/api/calib/sweep/begin")
     def calib_sweep_begin():
-        try:
-            return calib.sweep_begin()
-        except CalibError as e:
-            raise HTTPException(e.code, e.detail) from e
+        return calib.sweep_begin()
 
     @app.post("/api/calib/sweep/end")
     def calib_sweep_end():
-        try:
-            return calib.sweep_end()
-        except CalibError as e:
-            raise HTTPException(e.code, e.detail) from e
+        return calib.sweep_end()
 
     @app.get("/api/calib/state")
     def calib_state():
@@ -284,17 +249,11 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
 
     @app.post("/api/calib/eeprom")
     def calib_eeprom(body: dict):
-        try:
-            return calib.eeprom(body.get("confirm", ""))
-        except CalibError as e:
-            raise HTTPException(e.code, e.detail) from e
+        return calib.eeprom(body.get("confirm", ""))
 
     @app.post("/api/calib/sign")
     def calib_sign(body: dict):
-        try:
-            return calib.sign(body["joint"], bool(body.get("flip")))
-        except CalibError as e:
-            raise HTTPException(e.code, e.detail) from e
+        return calib.sign(body["joint"], bool(body.get("flip")))
 
     @app.post("/api/calib/finish")
     def calib_finish(body: dict = None):
@@ -302,10 +261,7 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
         # hand-measured calibration/urdf_ticks.json - the wizard UI never
         # sends it, so real use always writes the real path.
         out = (body or {}).get("out", "calibration/urdf_ticks.json")
-        try:
-            return calib.finish(out=out)
-        except CalibError as e:
-            raise HTTPException(e.code, e.detail) from e
+        return calib.finish(out=out)
 
     @app.post("/api/control")
     def control(body: dict):
@@ -322,21 +278,6 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
         return {"control_on": bridge.control_on,
                 "seed": dict(bridge.latest_q) if bridge.control_on else {}}
 
-    @app.post("/api/record")
-    def record(body: dict):
-        cmd = body.get("cmd")
-        if cmd not in ("start", "stop", "discard"):
-            raise HTTPException(400, "cmd must be start, stop, or discard")
-        state = manager.snapshot()
-        if state["session_id"] is None:
-            raise HTTPException(409, "start a collection session first")
-        if cmd == "start":
-            return collection_call(
-                manager.start_episode, state["task_id"])
-        if cmd == "stop":
-            return collection_call(manager.stop_episode)
-        return collection_call(manager.discard_episode)
-
     # ---- managed collection -------------------------------------------
 
     @app.get("/api/tasks")
@@ -345,11 +286,8 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
 
     @app.post("/api/tasks")
     def task_create(body: dict):
-        return collection_call(
-            catalog.create_task,
-            body.get("name", ""),
-            body.get("instruction", ""),
-        )
+        return catalog.create_task(
+            body.get("name", ""), body.get("instruction", ""))
 
     @app.patch("/api/tasks/{task_id}")
     def task_update(task_id: str, body: dict):
@@ -358,7 +296,7 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
             for key in ("name", "instruction", "archived")
             if key in body
         }
-        return collection_call(catalog.update_task, task_id, **fields)
+        return catalog.update_task(task_id, **fields)
 
     @app.get("/api/collection")
     def collection_state():
@@ -366,28 +304,24 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
 
     @app.post("/api/collection/session/start")
     def collection_session_start(body: dict):
-        return collection_call(
-            manager.start_session,
-            body.get("task_id", ""),
-            body.get("name", ""),
-        )
+        return manager.start_session(
+            body.get("task_id", ""), body.get("name", ""))
 
     @app.post("/api/collection/episode/start")
     def collection_episode_start(body: dict):
-        return collection_call(
-            manager.start_episode, body.get("task_id", ""))
+        return manager.start_episode(body.get("task_id", ""))
 
     @app.post("/api/collection/episode/stop")
     def collection_episode_stop():
-        return collection_call(manager.stop_episode)
+        return manager.stop_episode()
 
     @app.post("/api/collection/episode/discard")
     def collection_episode_discard():
-        return collection_call(manager.discard_episode)
+        return manager.discard_episode()
 
     @app.post("/api/collection/session/finish")
     def collection_session_finish():
-        return collection_call(manager.finish_session)
+        return manager.finish_session()
 
     @app.get("/api/collection/recovery")
     def collection_recovery():
@@ -395,33 +329,25 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
 
     @app.post("/api/collection/recovery/{session_id}/finish")
     def collection_recovery_finish(session_id: str):
-        return collection_call(manager.recover_finish, session_id)
+        return manager.recover_finish(session_id)
 
     @app.post("/api/collection/recovery/{session_id}/archive")
     def collection_recovery_archive(session_id: str):
-        return collection_call(manager.recover_archive, session_id)
+        return manager.recover_archive(session_id)
 
     # ---- immutable curated exports --------------------------------------
 
     @app.post("/api/exports/preview")
     def export_preview(body: dict):
-        return export_call(
-            exports.preview,
-            body.get("name", ""),
-            body.get("task_ids", []),
-        )
+        return exports.preview(body.get("name", ""), body.get("task_ids", []))
 
     @app.post("/api/exports")
     def export_start(body: dict):
-        return export_call(
-            exports.start,
-            body.get("name", ""),
-            body.get("task_ids", []),
-        )
+        return exports.start(body.get("name", ""), body.get("task_ids", []))
 
     @app.get("/api/exports/{export_id}")
     def export_status(export_id: str):
-        return export_call(exports.status, export_id)
+        return exports.status(export_id)
 
     # ---- curated collection replay ---------------------------------------
 
@@ -443,7 +369,7 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
 
     @app.get("/api/curation/sessions/{session_id}/episodes")
     def curation_episodes(session_id: str):
-        collection_call(catalog.session, session_id)
+        catalog.session(session_id)
         return {"episodes": library.list_episodes(session_id=session_id)}
 
     @app.patch("/api/curation/episodes/{session_id}/{source_index}")
@@ -455,8 +381,7 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
         # continue against stale selection metadata.
         player.stop()
         player.arm(False, False)
-        return collection_call(
-            catalog.update_episode, session_id, source_index, body)
+        return catalog.update_episode(session_id, source_index, body)
 
     @app.get("/api/curation/episodes/{session_id}/{source_index}/states")
     def curation_states(
@@ -488,33 +413,6 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
             headers={"Cache-Control": "no-store"},
         )
 
-    # ---- legacy dataset replay ------------------------------------------
-
-    @app.get("/api/episodes")
-    def episodes(refresh: bool = False):
-        if refresh:
-            legacy_library.reload()  # pick up episodes recorded since startup
-        try:
-            return {
-                "root": legacy_library.root,
-                "episodes": legacy_library.episodes(),
-            }
-        except Exception as e:                                # noqa: BLE001
-            # A half-written or foreign dataset should read as "nothing to
-            # replay", not take the whole cockpit page down.
-            return {
-                "root": legacy_library.root,
-                "episodes": [],
-                "error": str(e),
-            }
-
-    @app.get("/api/episodes/{index}/states")
-    def episode_states(index: int):
-        try:
-            return legacy_library.states(index)
-        except KeyError as e:
-            raise HTTPException(404, str(e)) from e
-
     # ---- replay ON THE REAL ARM -----------------------------------------
     # These DO move the robot. Everything they publish still goes through
     # elrobot_driver and its gates; the extra locks here are about not
@@ -526,44 +424,24 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
 
     @app.post("/api/replay/arm")
     def replay_arm(body: dict):
-        try:
-            return player.arm(bool(body.get("on")), bridge.control_on)
-        except ReplayError as e:
-            raise HTTPException(e.code, e.detail) from e
+        return player.arm(bool(body.get("on")), bridge.control_on)
 
     @app.post("/api/replay/play")
     def replay_play(body: dict):
         try:
-            selection = (
-                EpisodeRef(
-                    str(body["session_id"]),
-                    int(body.get("episode", -1)),
-                    bool(body.get("raw", False)),
-                )
-                if body.get("session_id")
-                else int(body.get("episode", -1))
+            selection = EpisodeRef(
+                str(body["session_id"]),
+                int(body.get("episode", -1)),
+                bool(body.get("raw", False)),
             )
             return player.play(
                 selection, float(body.get("speed", 0.6)))
-        except ReplayError as e:
-            raise HTTPException(e.code, e.detail) from e
         except (KeyError, ValueError) as e:
             raise HTTPException(404, str(e)) from e
 
     @app.post("/api/replay/stop")
     def replay_stop():
         return player.stop()
-
-    @app.get("/api/episodes/{index}/frame/{n}")
-    def episode_frame(index: int, n: int, cam: str = "wrist"):
-        if cam not in ("wrist", "ext"):
-            raise HTTPException(404, "cam must be wrist or ext")
-        try:
-            jpeg = legacy_library.frame_jpeg(index, n, cam)
-        except KeyError as e:
-            raise HTTPException(404, str(e)) from e
-        return Response(content=jpeg, media_type="image/jpeg",
-                        headers={"Cache-Control": "no-store"})
 
     # Exactly ONE connection may command the arm. control_on lives on the
     # shared bridge, so without this two cockpit tabs would each run their

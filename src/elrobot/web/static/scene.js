@@ -1,6 +1,5 @@
 import * as THREE from "three";
 import URDFLoader from "/static/vendor/URDFLoader.js";
-import { ColladaLoader } from "/static/vendor/three/examples/jsm/loaders/ColladaLoader.js";
 
 export function makeScene(el) {
   const scene = new THREE.Scene();
@@ -19,15 +18,11 @@ export function makeScene(el) {
 
   let robot = null;
   const loader = new URDFLoader();
-  const dae = new ColladaLoader();
-  loader.loadMeshCb = (path, mgr, done) =>
-    dae.load(path, (res) => done(res.scene),
-      undefined, (err) => console.error("mesh load failed:", path, err));
   loader.load("/urdf", (r2) => { robot = r2; scene.add(robot); },
     undefined, (err) => console.error("URDF load failed:", err));
 
   // minimal orbit (drag to rotate, wheel to zoom) - no OrbitControls dep
-  let drag = null, theta = 0.8, phi = 1.1, dist = 0.75;
+  let drag = null, theta = 0.8, phi = 1.1, dist = 0.9;
   const applyCam = () => {
     cam.position.set(dist * Math.sin(phi) * Math.cos(theta),
                      dist * Math.sin(phi) * Math.sin(theta),

@@ -342,30 +342,6 @@ class CollectionCatalog:
             session = self._session(self._data, session_id)
             return copy.deepcopy(self._episode(session, source_index))
 
-    def task_groups(self) -> list[dict]:
-        with self._lock:
-            groups = {}
-            for session in self._data["sessions"].values():
-                if session["state"] != "ready":
-                    continue
-                for episode in session["episodes"].values():
-                    task_id = episode["task_id"] or episode["source_task_id"]
-                    group = groups.setdefault(task_id, {
-                        "task": copy.deepcopy(self._data["tasks"][task_id]),
-                        "episodes": 0,
-                        "kept": 0,
-                        "frames": 0,
-                    })
-                    trim = episode["trim"]
-                    frames = (
-                        trim["end_frame_exclusive"] - trim["start_frame"]
-                        if trim else episode["frames"]
-                    )
-                    group["episodes"] += 1
-                    group["frames"] += frames
-                    group["kept"] += episode["review"] == "kept"
-            return list(groups.values())
-
     def create_export(self, record: dict) -> dict:
         if not isinstance(record, dict) or not str(record.get("id", "")).strip():
             raise CatalogError("export id is required")

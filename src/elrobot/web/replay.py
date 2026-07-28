@@ -21,7 +21,6 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 import threading  # noqa: E402
 import time  # noqa: E402
 from dataclasses import asdict, is_dataclass  # noqa: E402
-from pathlib import Path  # noqa: E402
 
 import cv2
 import numpy as np
@@ -53,9 +52,6 @@ class ReplayLibrary:
         self._ds = None
         self._lock = threading.Lock()
 
-    def available(self) -> bool:
-        return Path(self.root).exists()
-
     def _dataset(self):
         if self._ds is None:
             with self._lock:
@@ -66,61 +62,15 @@ class ReplayLibrary:
                         video_backend="pyav")
         return self._ds
 
-    def reload(self):
-        """Drop the cache so episodes recorded since startup appear."""
-        with self._lock:
-            self._ds = None
-
-    def writing_in_progress(self) -> bool:
-        """True while a recorder still holds this dataset open.
-
-        LeRobotDataset buffers episodes and only writes the parquet footer
-        and meta/episodes on finalize(), i.e. when the recorder EXITS. So a
-        dataset being actively recorded into has a last data file with no
-        PAR1 footer, and reading it raises a bare ArrowInvalid about
-        "Parquet magic bytes not found" - which looks like corruption but is
-        just an unfinished write. Detect it so the UI can say "quit the
-        recorder to replay" instead of "no episodes".
-        """
-        files = sorted((Path(self.root) / "data").rglob("*.parquet"))
-        if not files:
-            return False
-        try:
-            with open(files[-1], "rb") as fh:
-                fh.seek(-4, 2)
-                return fh.read(4) != b"PAR1"
-        except OSError:
-            return False
-
-    def episodes(self) -> list:
-        if not self.available():
-            return []
-        if self.writing_in_progress():
-            raise RuntimeError(
-                "a recorder is still running - its episodes are only written "
-                "out when it exits (q + ENTER, or Ctrl-C). Quit it, then "
-                "press Refresh.")
-        ds = self._dataset()
-        out = []
-        for row in ds.meta.episodes:
-            lo, hi = row["dataset_from_index"], row["dataset_to_index"]
-            tasks = row.get("tasks")
-            out.append({
-                "index": int(row["episode_index"]),
-                "frames": int(row["length"]),
-                "seconds": round(int(row["length"]) / ds.fps, 1),
-                "task": (tasks[0] if isinstance(tasks, list) and tasks
-                         else str(tasks or "")),
-                "from": int(lo), "to": int(hi),
-            })
-        return out
-
     def _bounds(
         self, episode: int, start_frame=None, end_frame_exclusive=None,
     ):
-        for e in self.episodes():
-            if e["index"] == episode:
-                length = e["to"] - e["from"]
+        ds = self._dataset()
+        for row in ds.meta.episodes:
+            if int(row["episode_index"]) == episode:
+                lo = int(row["dataset_from_index"])
+                hi = int(row["dataset_to_index"])
+                length = hi - lo
                 start = 0 if start_frame is None else int(start_frame)
                 end = (
                     length if end_frame_exclusive is None
@@ -130,7 +80,7 @@ class ReplayLibrary:
                     raise KeyError(
                         f"invalid frame range [{start}, {end}) "
                         f"for {length}-frame episode {episode}")
-                return e["from"] + start, e["from"] + end
+                return lo + start, lo + end
         raise KeyError(f"no episode {episode}")
 
     def actions(

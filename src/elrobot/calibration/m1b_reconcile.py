@@ -27,13 +27,11 @@ from pathlib import Path
 
 import numpy as np
 import pinocchio as pin
-from lerobot.motors import Motor, MotorNormMode
-from lerobot.motors.feetech import FeetechMotorsBus
 
+from elrobot.calibration import steps
 from elrobot.calibration.steps import derive_table
 from elrobot.calibration.steps import unwrap as _unwrap  # re-exported below
 
-MODEL = "sts3215"
 TICKS_PER_RAD = 651.9
 ENC = 4096
 ARM = [f"rev_motor_{i:02d}" for i in range(1, 8)]
@@ -44,12 +42,6 @@ NO_RANGE = ["rev_motor_05", "rev_motor_07"]  # excluded from M1a sweep
 TCP_FRAME = "Gripper_Base_v1_1"
 PROBE = 0.3  # rad, for deriving the "which way does it move" description
 TRANSLATE_MIN = 0.005  # m; below this the joint is a roll -> describe the spin
-
-
-def build_bus(port):
-    motors = {n: Motor(i, MODEL, MotorNormMode.RANGE_M100_100)
-              for i, n in enumerate(ARM + ["rev_motor_08"], start=1)}
-    return FeetechMotorsBus(port=port, motors=motors, calibration=None)
 
 
 def read(bus, name):
@@ -172,15 +164,13 @@ def main():
     model = pin.buildModelFromUrdf("docs/urdf_Elrobot.urdf")
     data = model.createData()
     jid = {model.names[j]: j for j in range(1, model.njoints)}
-    limits = {n: (model.lowerPositionLimit[model.joints[jid[n]].idx_q],
-                  model.upperPositionLimit[model.joints[jid[n]].idx_q])
-              for n in ARM}
+    limits = steps.read_urdf_limits(ARM)
     calib = json.loads(Path(args.calib).read_text())
 
     print(__doc__)
     input("Arm resting low / supported? Torque will be disabled. ENTER...")
 
-    bus = build_bus(args.port)
+    bus = steps.build_bus(args.port)
     bus.connect(handshake=True)
     try:
         bus.disable_torque()

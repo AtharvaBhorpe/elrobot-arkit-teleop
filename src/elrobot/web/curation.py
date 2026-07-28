@@ -16,9 +16,8 @@ class EpisodeRef:
 
 
 class CuratedReplayLibrary:
-    def __init__(self, catalog, legacy=None):
+    def __init__(self, catalog):
         self.catalog = catalog
-        self.legacy = legacy
         self._sessions = {}
 
     def _resolve(self, ref: EpisodeRef):
@@ -76,29 +75,17 @@ class CuratedReplayLibrary:
                 })
         return episodes
 
-    def actions(self, selection) -> list:
-        if isinstance(selection, int):
-            if self.legacy is None:
-                raise KeyError("legacy replay is unavailable")
-            return self.legacy.actions(selection)
+    def actions(self, selection: EpisodeRef) -> list:
         library, _, start, end = self._resolve(selection)
         return library.actions(
             selection.source_index, start, end)
 
-    def states(self, selection) -> dict:
-        if isinstance(selection, int):
-            if self.legacy is None:
-                raise KeyError("legacy replay is unavailable")
-            return self.legacy.states(selection)
+    def states(self, selection: EpisodeRef) -> dict:
         library, _, start, end = self._resolve(selection)
         return library.states(
             selection.source_index, start, end)
 
-    def frame_jpeg(self, selection, n: int, cam: str) -> bytes:
-        if isinstance(selection, int):
-            if self.legacy is None:
-                raise KeyError("legacy replay is unavailable")
-            return self.legacy.frame_jpeg(selection, n, cam)
+    def frame_jpeg(self, selection: EpisodeRef, n: int, cam: str) -> bytes:
         library, _, start, end = self._resolve(selection)
         return library.frame_jpeg(
             selection.source_index, n, cam, start, end)

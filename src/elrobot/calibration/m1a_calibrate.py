@@ -22,12 +22,12 @@ import json
 import time
 from pathlib import Path
 
-from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.feetech import FeetechMotorsBus, OperatingMode
+from lerobot.motors import MotorCalibration
+from lerobot.motors.feetech import OperatingMode
 
+from elrobot.calibration import steps
 from elrobot.calibration.steps import gate_ranges, write_homing
 
-MODEL = "sts3215"
 TICKS_PER_RAD = 651.9  # STS3215 direct drive, 4096 ticks/rev
 
 # Joints 5 and 7 sweep 336 deg / 340 deg — near a full revolution, so a
@@ -50,14 +50,6 @@ URDF_RANGE_RAD = {
     "rev_motor_07": 5.9350,
 }
 SANE_TOLERANCE = 0.20  # recorded span within +/-20% of URDF expectation
-
-
-def build_bus(port: str) -> FeetechMotorsBus:
-    motors = {
-        f"rev_motor_{i:02d}": Motor(i, MODEL, MotorNormMode.RANGE_M100_100)
-        for i in range(1, 9)
-    }
-    return FeetechMotorsBus(port=port, motors=motors, calibration=None)
 
 
 def check_ranges(mins: dict, maxes: dict) -> bool:
@@ -103,7 +95,7 @@ def main() -> int:
     print(__doc__)
     input("Arm resting low / supported? Torque will be disabled. ENTER to start...")
 
-    bus = build_bus(args.port)
+    bus = steps.build_bus(args.port)
     bus.connect(handshake=True)
     print(f"connected to {args.port}")
 

@@ -15,7 +15,7 @@ ENTER starts/stops an episode; q + ENTER saves everything and exits.
 --auto N records one N-second episode with no keyboard (used by the test).
 Also controllable over ROS: /record/cmd (std_msgs/String, "start"|"stop"|
 "discard") in, /record/status (JSON: recording/episodes/frames) out at 1 Hz
-- the web cockpit's Record panel uses this, terminal ENTER keeps working.
+- for external controllers; terminal ENTER keeps working.
 
 Frames are skipped (with a warn) while any stream is missing or stale, so a
 dead camera yields a short episode, not silently corrupt data.

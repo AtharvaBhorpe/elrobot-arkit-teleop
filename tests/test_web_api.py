@@ -25,7 +25,6 @@ class FakeBridge:
         self.latest_stamp = time.monotonic()
         self.control_on = False
         self.published = []          # (dict) commands captured
-        self.record_cmds = []        # str commands captured
         self.record_status = None
         self.record_stamp = 0.0
 
@@ -34,9 +33,6 @@ class FakeBridge:
 
     def publish_command(self, positions: dict):
         self.published.append(dict(positions))
-
-    def publish_record_cmd(self, cmd: str):
-        self.record_cmds.append(cmd)
 
     def record_status_fresh(self):
         # Must mirror WebBridge: the WS sender calls this every tick, and a
@@ -119,19 +115,6 @@ def test_collection_api_errors_and_websocket_state():
     }).status_code == 422
     with c.websocket_connect("/ws") as ws:
         assert "collection" in ws.receive_json()
-
-
-def test_status_reports_joints_and_flags():
-    app = create_app(FakeBridge())
-    c = TestClient(app)
-    r = c.get("/api/status")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["control_on"] is False
-    assert body["commanders"] == 0
-    assert body["joints"]["rev_motor_01"] == 0.1
-    assert body["age_s"] < 1.0
-    assert body["driver_alive"] is False   # no /joint_states publisher on 77
 
 
 def test_control_toggle_and_seed():
@@ -262,6 +245,25 @@ def test_static_urdf_and_meshes_served():
     assert "data/viz_meshes" not in r.text          # no filesystem paths leak
     one = r.text.split('filename="meshes/')[1].split('"')[0]
     assert c.get(f"/meshes/{one}").status_code == 200
+
+
+def test_viz_mesh_format_has_a_browser_loader():
+    """The display URDF consists of DAE meshes, so the vendored loader must
+    retain COLLADA support rather than silently render only the grid."""
+    loader = (
+        Path(__file__).resolve().parents[1]
+        / "src/elrobot/web/static/vendor/URDFLoader.js"
+    ).read_text()
+    assert "ColladaLoader" in loader
+    assert r"/\.dae$/i" in loader
+
+
+def test_scene_default_view_is_modestly_zoomed_out():
+    scene = (
+        Path(__file__).resolve().parents[1]
+        / "src/elrobot/web/static/scene.js"
+    ).read_text()
+    assert "dist = 0.9" in scene
 
 
 def test_calib_refuses_while_driver_alive():
@@ -586,7 +588,6 @@ def _curated_client():
     client = TestClient(create_app(
         bridge,
         collection_root=root,
-        dataset_root="data/definitely_not_here",
     ))
     return client, bridge, session
 
@@ -771,68 +772,6 @@ def test_replay_vectors_do_not_decode_video_frames():
     assert library.actions(0) == vectors["action"]
 
 
-def test_replay_lists_and_serves_recorded_episodes():
-    """Replay reads back what episode_recorder wrote, on a dataset this test
-    builds itself."""
-    root = Path(tempfile.mkdtemp()) / "ds"
-    _tiny_dataset(root)
-    c = TestClient(create_app(FakeBridge(), dataset_root=str(root),
-                              repo_id="local/replay_fixture"))
-
-    eps = c.get("/api/episodes").json()["episodes"]
-    assert eps and eps[0]["frames"] > 0 and eps[0]["seconds"] > 0
-
-    s = c.get(f"/api/episodes/{eps[0]['index']}/states").json()
-    assert s["frames"] == eps[0]["frames"]
-    assert len(s["states"][0]) == 8 and s["fps"] > 0
-    assert s["names"][0] == "rev_motor_01"
-
-    r = c.get(f"/api/episodes/{eps[0]['index']}/frame/3?cam=wrist")
-    assert r.status_code == 200
-    assert r.headers["content-type"] == "image/jpeg"
-    assert r.content[:2] == b"\xff\xd8"
-
-    assert c.get("/api/episodes/999/states").status_code == 404
-    assert c.get("/api/episodes/0/frame/0?cam=nope").status_code == 404
-
-
-def test_replay_never_commands_the_arm():
-    """Visual replay must not move the robot. Physical re-execution is a
-    separate, deliberately-unbuilt feature (see replay.py)."""
-    root = Path(tempfile.mkdtemp()) / "ds"
-    _tiny_dataset(root, episodes=1, frames=4)
-    b = FakeBridge()
-    b.control_on = True                      # even with control enabled
-    c = TestClient(create_app(b, dataset_root=str(root),
-                              repo_id="local/replay_fixture"))
-    c.get("/api/episodes")
-    c.get("/api/episodes/0/states")
-    for n in range(5):
-        c.get(f"/api/episodes/0/frame/{n}?cam=wrist")
-    assert b.published == []                 # nothing reached /joint_command
-
-
-def test_replay_reports_a_recorder_still_writing():
-    """LeRobotDataset only writes the parquet footer and meta/episodes on
-    finalize(), i.e. when the recorder EXITS. Until then the newest data file
-    has no PAR1 footer and reading it raises a bare ArrowInvalid about
-    "Parquet magic bytes not found" - which reads as corruption but is just
-    an unfinished write. Observed live: the Record panel said "2 episodes"
-    while the replay dropdown said "no episodes"."""
-    root = Path(tempfile.mkdtemp()) / "ds"
-    _tiny_dataset(root, episodes=1, frames=4)
-    # simulate the in-progress state: a newer data file with no footer
-    newest = sorted((root / "data").rglob("*.parquet"))[-1]
-    (newest.parent / "file-999.parquet").write_bytes(b"PAR1\x00\x00not-done")
-
-    c = TestClient(create_app(FakeBridge(), dataset_root=str(root),
-                              repo_id="local/replay_fixture"))
-    r = c.get("/api/episodes").json()
-    assert r["episodes"] == []
-    assert "recorder is still running" in r["error"]
-    assert "Refresh" in r["error"]          # tells the operator what to do
-
-
 def test_static_assets_are_not_cached():
     """A browser holding a cached app.js against freshly-served HTML gives a
     page whose new controls are inert - it cost real debugging time twice."""
@@ -843,35 +782,32 @@ def test_static_assets_are_not_cached():
 
 
 def _physical_client(driver=True):
-    root = Path(tempfile.mkdtemp()) / "ds"
-    _tiny_dataset(root, episodes=1, frames=5)
-    b = FakeBridge()
+    c, b, session = _curated_client()
     b.driver_alive = lambda: driver
-    c = TestClient(create_app(b, dataset_root=str(root),
-                              repo_id="local/replay_fixture"))
-    return c, b
+    return c, b, session
 
 
 def test_physical_replay_refuses_until_armed():
     """It moves a real arm with nobody on the clutch; playing must never be
     one click away."""
-    c, b = _physical_client()
+    c, b, session = _physical_client()
     assert c.post("/api/replay/play",
-                  json={"episode": 0, "speed": 0.5}).status_code == 409
+                  json={"session_id": session["id"], "episode": 0,
+                        "speed": 0.5}).status_code == 409
     assert b.published == []
 
 
 def test_physical_replay_needs_a_driver():
     """Every safety gate - velocity clamp, workspace box, sigma floor, joint
     limits, grasp latch - lives in the driver. No driver, no gates."""
-    c, _ = _physical_client(driver=False)
+    c, _, _ = _physical_client(driver=False)
     r = c.post("/api/replay/arm", json={"on": True})
     assert r.status_code == 409 and "driver" in r.json()["detail"]
 
 
 def test_physical_replay_is_exclusive_with_slider_control():
     """Two automatic publishers on /joint_command with no arbitration."""
-    c, b = _physical_client()
+    c, b, _ = _physical_client()
     c.post("/api/control", json={"on": True})
     r = c.post("/api/replay/arm", json={"on": True})
     assert r.status_code == 409 and "Web control" in r.json()["detail"]
@@ -889,7 +825,7 @@ def test_control_refusal_carries_a_usable_message():
     switch flipped ON against a 409 because the client passed the missing
     control_on into toggleAttribute, which TOGGLES when its force argument is
     undefined - the UI claimed control the server had denied."""
-    c, _ = _physical_client()
+    c, _, _ = _physical_client()
     c.post("/api/replay/arm", json={"on": True})
     r = c.post("/api/control", json={"on": True})
     assert r.status_code == 409
@@ -899,10 +835,11 @@ def test_control_refusal_carries_a_usable_message():
 
 
 def test_physical_replay_caps_speed():
-    c, _ = _physical_client()
+    c, _, session = _physical_client()
     c.post("/api/replay/arm", json={"on": True})
     for bad in (0, -1, 1.5, 99):
-        r = c.post("/api/replay/play", json={"episode": 0, "speed": bad})
+        r = c.post("/api/replay/play", json={
+            "session_id": session["id"], "episode": 0, "speed": bad})
         assert r.status_code == 400, f"speed {bad} should be rejected"
 
 
@@ -910,11 +847,12 @@ def test_physical_replay_seeks_start_then_streams_and_stops():
     """Playback publishes the episode's first pose until the arm has actually
     reached it - letting the DRIVER's slew limiter walk it there - and only
     then streams the recorded actions."""
-    c, b = _physical_client()
+    c, b, session = _physical_client()
     # arm parked far away: the seek phase must hold, not stream
     b.latest_q = {n: 0.0 for n in [f"rev_motor_{i:02d}" for i in range(1, 9)]}
     c.post("/api/replay/arm", json={"on": True})
-    c.post("/api/replay/play", json={"episode": 0, "speed": 1.0})
+    c.post("/api/replay/play", json={
+        "session_id": session["id"], "episode": 0, "speed": 1.0})
 
     time.sleep(0.4)
     assert b.published, "should be publishing the start pose while seeking"
@@ -937,29 +875,9 @@ def test_physical_replay_seeks_start_then_streams_and_stops():
     assert len(b.published) == sent      # publishing really stopped
 
 
-def test_replay_survives_a_missing_dataset():
-    c = TestClient(create_app(FakeBridge(),
-                              dataset_root="data/definitely_not_here"))
-    r = c.get("/api/episodes")
-    assert r.status_code == 200              # empty list, not a 500
-    assert r.json()["episodes"] == []
-
-
-def test_legacy_record_requires_active_session():
-    b = FakeBridge()
-    c = TestClient(create_app(b))
-    r = c.post("/api/record", json={"cmd": "start"})
-    assert r.status_code == 409
-    assert b.record_cmds == []
-    r = c.post("/api/record", json={"cmd": "bogus"})
-    assert r.status_code == 400
-    assert b.record_cmds == []
-
-
 if __name__ == "__main__":
     test_task_and_collection_api()
     test_collection_api_errors_and_websocket_state()
-    test_status_reports_joints_and_flags()
     test_control_toggle_and_seed()
     test_control_requires_fresh_driver_state()
     test_control_releases_when_driver_state_goes_stale()
@@ -967,6 +885,8 @@ if __name__ == "__main__":
     test_mjpeg_placeholder_when_no_camera()
     test_cam_frame_endpoint_returns_single_jpeg()
     test_static_urdf_and_meshes_served()
+    test_viz_mesh_format_has_a_browser_loader()
+    test_scene_default_view_is_modestly_zoomed_out()
     test_calib_refuses_while_driver_alive()
     test_calib_eeprom_needs_typed_confirmation()
     test_calib_writes_eeprom_before_sweeping()
@@ -988,9 +908,6 @@ if __name__ == "__main__":
     test_collection_and_curate_shell_is_served()
     test_metadata_only_curation_updates_do_not_reload_visual_replay()
     test_replay_vectors_do_not_decode_video_frames()
-    test_replay_lists_and_serves_recorded_episodes()
-    test_replay_never_commands_the_arm()
-    test_replay_reports_a_recorder_still_writing()
     test_static_assets_are_not_cached()
     test_physical_replay_refuses_until_armed()
     test_physical_replay_needs_a_driver()
@@ -998,6 +915,4 @@ if __name__ == "__main__":
     test_control_refusal_carries_a_usable_message()
     test_physical_replay_caps_speed()
     test_physical_replay_seeks_start_then_streams_and_stops()
-    test_replay_survives_a_missing_dataset()
-    test_legacy_record_requires_active_session()
     print("WEB API TESTS PASSED")
