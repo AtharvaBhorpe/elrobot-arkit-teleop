@@ -67,8 +67,22 @@
           <div class="cam-label">external</div>
         </div>
       </div>
-      <div class="card viewer">
-        <div id="scene3d"></div>
+      <div class="visual-row">
+        <div class="card viewer">
+          <div id="scene3d"></div>
+        </div>
+        <div class="card joint-plot-card">
+          <div class="plot-heading">
+            <strong>Joint angles</strong>
+            <span id="joint-plot-status" class="muted">
+              Waiting for joint states
+            </span>
+          </div>
+          <canvas id="joint-plot"
+                  aria-label="Waiting for joint states"></canvas>
+          <div id="joint-plot-legend" class="plot-legend"
+               aria-label="Visible joints"></div>
+        </div>
       </div>
     </div>
 

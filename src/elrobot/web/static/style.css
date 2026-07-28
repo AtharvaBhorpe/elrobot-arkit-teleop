@@ -202,7 +202,7 @@ body {
   display: none;
 }
 
-/* Left column: cameras row (fixed height) above the 3D viewer (fills) */
+/* Shared visual stage: cameras above the 3D viewer and joint history */
 .stage {
   display: flex;
   flex-direction: column;
@@ -235,6 +235,59 @@ body {
   min-height: 0;
 }
 
+.visual-row {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr);
+  gap: 10px;
+}
+
+.joint-plot-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px;
+}
+
+.plot-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+
+#joint-plot {
+  flex: 1;
+  min-height: 180px;
+  height: auto !important;
+  touch-action: none;
+}
+
+.plot-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+}
+
+.plot-legend-item {
+  padding: 3px 7px;
+  color: var(--muted-foreground);
+  border-color: var(--joint-color);
+  box-shadow: none;
+  font-size: 11px;
+}
+
+.plot-legend-item[aria-pressed="true"] {
+  color: var(--foreground);
+  border-bottom: 3px solid var(--joint-color);
+}
+
+.plot-legend-item[aria-pressed="false"] {
+  opacity: 0.4;
+}
+
 /* Narrow screens: fall back to scrolling rather than crushing everything */
 /* 1fr stage + 340 deck + 300 rail + gaps/padding needs ~1100px to still
    make sense; below that stack into one scrolling column. Kept at 1200 so
@@ -251,6 +304,12 @@ body {
   }
   .viewer.card {
     min-height: 380px;
+  }
+  .visual-row {
+    grid-template-columns: 1fr;
+  }
+  .joint-plot-card {
+    min-height: 300px;
   }
   .deck {
     overflow-y: visible;      /* page scrolls in this mode, not the column */

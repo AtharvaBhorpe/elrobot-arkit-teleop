@@ -1,4 +1,5 @@
 import { makeScene } from "/static/scene.js";
+import { makeJointPlot } from "/static/joint-plot.mjs";
 
 // Declared up here, not next to the replay code at the bottom: the live
 // camera pollers and the WS handler both read replay.active, and
@@ -19,6 +20,18 @@ const replay = {
 const NAMES = ["rev_motor_01","rev_motor_02","rev_motor_03","rev_motor_04",
                "rev_motor_05","rev_motor_06","rev_motor_07","rev_motor_08"];
 const LIM = { rev_motor_08: [0.0, 2.0] };      // gripper; arm joints ±1.8 display
+const jointPlot = makeJointPlot({
+  canvas: document.getElementById("joint-plot"),
+  legend: document.getElementById("joint-plot-legend"),
+  status: document.getElementById("joint-plot-status"),
+  names: NAMES,
+  onScrub(frame) {
+    if (!replay.states || !selectedEpisode) return;
+    stopReplay();
+    showFrame(frame);
+  },
+});
+jointPlot.showLive();
 const scene = makeScene(document.getElementById("scene3d"));
 const rows = {};
 const rail = document.getElementById("joints");
@@ -80,6 +93,7 @@ function connect() {
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
     if (m.type !== "state") return;
+    jointPlot.pushLive(m.joints);
     // While replaying, the 3D view shows the RECORDED pose, not the live
     // arm - otherwise the live stream fights the playback every 33 ms.
     if (!replay.active) scene.setJoints(m.joints);
@@ -368,6 +382,8 @@ async function selectMode(mode) {
   replay.active = false;
   replay.states = null;
   workspace.dataset.mode = mode;
+  if (mode === "teleop") jointPlot.showLive();
+  else jointPlot.showEmpty("Select an episode");
   for (const tab of modeTabs) {
     const active = tab.id === `mode-${mode}`;
     tab.setAttribute("aria-selected", String(active));
@@ -376,6 +392,7 @@ async function selectMode(mode) {
   if (mode === "curate") {
     if (document.body.hasAttribute("data-control")) await setControl(false);
     await refreshCurate();
+    if (selectedEpisode) await loadCuratedReplay();
   }
 }
 
@@ -797,6 +814,7 @@ async function showFrame(n) {
   if (!replay.states || !selectedEpisode) return;
   const i = Math.max(0, Math.min(n, replay.states.length - 1));
   replay.frame = i;
+  jointPlot.setReplayFrame(i);
   rEl.scrub.value = String(i);
   const pose = {};
   replay.names.forEach((name, index) => {
@@ -834,6 +852,7 @@ async function loadCuratedReplay() {
   const token = ++selectionToken;
   stopReplay();
   rEl.status.textContent = "Loading episode…";
+  jointPlot.showEmpty("Loading episode…");
   const raw = curateEl.raw.checked ? "?raw=true" : "";
   try {
     const states = await request(
@@ -850,6 +869,11 @@ async function loadCuratedReplay() {
     replay.fps = states.fps || 30;
     replay.frame = 0;
     replay.active = true;
+    jointPlot.showReplay(
+      replay.states, replay.names, replay.fps, 0,
+      `${selectedEpisode.session_name || "Session"}`
+        + ` · #${selectedEpisode.source_index}`,
+    );
     rEl.scrub.max = String(states.states.length - 1);
     rEl.scrub.disabled = false;
     rEl.play.disabled = false;
@@ -858,6 +882,7 @@ async function loadCuratedReplay() {
   } catch (error) {
     rEl.status.textContent = error.message;
     rEl.status.classList.add("err");
+    jointPlot.showEmpty(error.message);
   }
 }
 

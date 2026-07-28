@@ -707,9 +707,14 @@ def test_collection_and_curate_shell_is_served():
         "episode-start", "session-finish", "curate-task-list",
         "curate-episode-list", "curate-keep", "curate-reject",
         "curate-trim-start", "curate-trim-end", "curate-view-raw",
-        "export-open",
+        "export-open", "joint-plot", "joint-plot-status",
+        "joint-plot-legend",
     ):
         assert f'id="{element_id}"' in html
+    plot_module = c.get("/static/joint-plot.mjs")
+    assert plot_module.status_code == 200
+    assert plot_module.headers["cache-control"] == "no-store"
+    assert "export function makeJointPlot" in plot_module.text
 
 
 def test_metadata_only_curation_updates_do_not_reload_visual_replay():
