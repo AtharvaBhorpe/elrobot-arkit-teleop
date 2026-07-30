@@ -21,6 +21,8 @@ import time
 
 import numpy as np
 import rclpy
+from rclpy._rclpy_pybind11 import RCLError
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
@@ -36,10 +38,14 @@ SCALE = 0.4
 
 
 def packet(pos, n_touch, rot=(0.0, 0.0, 0.0, 1.0)):
-    return json.dumps({"sensordata": {
-        "arkit": {"position": list(pos), "rotation": list(rot)},
-        "touch": [{"x": 0, "y": 0}] * n_touch,
-    }}).encode()
+    return json.dumps(
+        {
+            "sensordata": {
+                "arkit": {"position": list(pos), "rotation": list(rot)},
+                "touch": [{"x": 0, "y": 0}] * n_touch,
+            }
+        }
+    ).encode()
 
 
 class Probe(Node):
@@ -48,8 +54,7 @@ class Probe(Node):
     def __init__(self):
         super().__init__("m2_test_probe")
         self.fk = CartesianServoIK()
-        self.qidx = {n: self.fk.model.joints[self.fk.model.getJointId(n)].idx_q
-                     for n in ARM_JOINTS}
+        self.qidx = {n: self.fk.model.joints[self.fk.model.getJointId(n)].idx_q for n in ARM_JOINTS}
         self.gripper = None
         self.seen = False
         self.create_subscription(JointState, "/joint_states", self._on_js, 1)
@@ -69,13 +74,25 @@ class Probe(Node):
 
 
 def main():
-    procs = [subprocess.Popen([sys.executable, "-m", m, *a])
-             for m, a in (("elrobot.nodes.ik_node", []),
-                          ("elrobot.nodes.arkit_receiver", ["--port", str(PORT)]))]
+    procs = [
+        subprocess.Popen([sys.executable, "-m", m, *a])
+        for m, a in (
+            ("elrobot.nodes.ik_node", []),
+            ("elrobot.nodes.arkit_receiver", ["--port", str(PORT)]),
+        )
+    ]
+    probe = spin = sock = None
     try:
         rclpy.init()
         probe = Probe()
-        spin = threading.Thread(target=rclpy.spin, args=(probe,), daemon=True)
+
+        def spin_probe():
+            try:
+                rclpy.spin(probe)
+            except (ExternalShutdownException, RCLError):
+                pass
+
+        spin = threading.Thread(target=spin_probe, daemon=True)
         spin.start()
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -107,16 +124,19 @@ def main():
         dz = tcp[2] - start[2]
         dxy = np.linalg.norm(tcp[:2] - start[:2])
         want = 0.25 * SCALE
-        print(f"TCP after +25 cm phone-up: {np.round(tcp, 4)} "
-              f"(dz={dz*100:+.1f} cm, want {want*100:.0f}; drift {dxy*100:.1f} cm)")
+        print(
+            f"TCP after +25 cm phone-up: {np.round(tcp, 4)} "
+            f"(dz={dz * 100:+.1f} cm, want {want * 100:.0f}; drift {dxy * 100:.1f} cm)"
+        )
         assert abs(dz - want) < 0.02, f"expected dz ~ {want:.2f}, got {dz:.3f}"
         assert dxy < 0.02, f"lateral drift {dxy:.3f} m"
 
         # 2) 2-finger tap latches the gripper closed
         send([0.0, 0.25, 0.0], 2)
         time.sleep(0.3)
-        assert probe.gripper is not None and \
-            abs(probe.gripper - GRIPPER_CLOSED) < 1e-6, probe.gripper
+        assert probe.gripper is not None and abs(probe.gripper - GRIPPER_CLOSED) < 1e-6, (
+            probe.gripper
+        )
         print("gripper latched closed")
 
         # 2b) RELEASE = FREEZE IMMEDIATELY (regression: arm kept moving ~3 s
@@ -124,16 +144,16 @@ def main():
         # the TCP must stop within ~0.4 s, not coast to the stale target.
         send([0.0, 0.25, 0.0], 1)
         time.sleep(0.1)
-        for _ in range(10):                    # yank the target far away
+        for _ in range(10):  # yank the target far away
             send([0.0, 0.8, 0.0], 1)
             time.sleep(0.02)
-        send([0.0, 0.8, 0.0], 0)               # 0 fingers: release mid-move
-        time.sleep(0.4)                        # stop-here target + decel
+        send([0.0, 0.8, 0.0], 0)  # 0 fingers: release mid-move
+        time.sleep(0.4)  # stop-here target + decel
         p1 = probe.tcp()
         time.sleep(0.8)
         drift = np.linalg.norm(probe.tcp() - p1)
-        assert drift < 0.005, f"kept moving {drift*1000:.0f} mm after release"
-        print(f"release mid-move freezes ({drift*1000:.1f} mm residual drift)")
+        assert drift < 0.005, f"kept moving {drift * 1000:.0f} mm after release"
+        print(f"release mid-move freezes ({drift * 1000:.1f} mm residual drift)")
 
         # 3) silence > deadman, then re-engage at a far phone pose: no jump.
         #    (If the deadman failed, the clutch would still be engaged and the
@@ -146,16 +166,22 @@ def main():
             time.sleep(0.02)
         jump = np.linalg.norm(probe.tcp() - before)
         assert jump < 0.01, f"re-engage after deadman jumped {jump:.3f} m"
-        print(f"deadman + far re-engage: no jump ({jump*1000:.1f} mm)")
+        print(f"deadman + far re-engage: no jump ({jump * 1000:.1f} mm)")
 
         print("\nM2 PIPELINE TEST PASSED")
         return 0
     finally:
+        if sock is not None:
+            sock.close()
         for p in procs:
             p.terminate()
         for p in procs:
             p.wait(timeout=5)
         rclpy.try_shutdown()
+        if spin is not None:
+            spin.join(timeout=5)
+        if probe is not None:
+            probe.destroy_node()
 
 
 if __name__ == "__main__":

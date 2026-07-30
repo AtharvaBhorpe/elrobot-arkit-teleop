@@ -263,7 +263,7 @@ replay controls.
 
 Visual and physical replay use the curated range by default. End-of-range behavior
 matches normal replay: after reaching the end, the next Play resets to the beginning
-of the selected range. The existing default physical replay speed remains `0.6`.
+of the selected range. Physical replay runs at the recorded 30 Hz rate.
 
 Leaving Curate, selecting another episode, editing its effective range, or enabling
 `View raw` stops and disarms physical replay first.

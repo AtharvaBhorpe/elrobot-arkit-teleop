@@ -49,8 +49,7 @@ class CollectionManager:
 
     def _require(self, state: str) -> None:
         if self._state != state:
-            raise CollectionError(
-                f"collection is {self._state}; expected {state}")
+            raise CollectionError(f"collection is {self._state}; expected {state}")
 
     def _task(self, task_id: str) -> dict:
         try:
@@ -81,8 +80,7 @@ class CollectionManager:
             self._require("idle")
             task = self._task(task_id)
             if self.external_recorder_alive():
-                raise CollectionError(
-                    "an independent episode_recorder is already running")
+                raise CollectionError("an independent episode_recorder is already running")
             self._state = "starting"
             self._error = None
             session = self.catalog.create_session(name)
@@ -101,11 +99,9 @@ class CollectionManager:
                 self.add_node(self._recorder)
             except Exception as exc:  # noqa: BLE001
                 self._detach_recorder()
-                self.catalog.finalize_session(
-                    session["id"], "archived_incomplete")
+                self.catalog.finalize_session(session["id"], "archived_incomplete")
                 self._idle()
-                raise CollectionError(
-                    f"cannot start collection: {exc}") from exc
+                raise CollectionError(f"cannot start collection: {exc}") from exc
             self._state = "ready"
             return self.snapshot()
 
@@ -130,15 +126,19 @@ class CollectionManager:
     def stop_episode(self) -> dict:
         with self._lock:
             self._require("recording")
-            frames = self._recorder.stop()
+            try:
+                frames = self._recorder.stop()
+            except Exception as exc:  # noqa: BLE001
+                self._recorder.discard()
+                self.catalog.clear_pending(self._session_id)
+                self._state = "ready"
+                raise CollectionError(f"episode was not saved: {exc}") from exc
             if frames < 1:
                 self.catalog.clear_pending(self._session_id)
                 self._state = "ready"
                 raise CollectionError("episode contained no frames")
-            pending = self.catalog.session(
-                self._session_id)["pending_episode"]
-            self.catalog.commit_episode(
-                self._session_id, pending["source_index"], frames)
+            pending = self.catalog.session(self._session_id)["pending_episode"]
+            self.catalog.commit_episode(self._session_id, pending["source_index"], frames)
             self._state = "ready"
             return self.snapshot()
 
@@ -160,8 +160,7 @@ class CollectionManager:
                 self._recorder.close()
                 self._detach_recorder()
                 if not session["episodes"]:
-                    self.catalog.finalize_session(
-                        session_id, "archived_empty")
+                    self.catalog.finalize_session(session_id, "archived_empty")
                     return self._idle()
                 raw = self.dataset_validator(session, False)
                 self._check_saved_episodes(session, raw)
@@ -172,8 +171,7 @@ class CollectionManager:
                 self.catalog.finalize_session(session_id, "recoverable")
                 self._error = str(exc)
                 self._idle()
-                raise CollectionError(
-                    f"cannot finalize collection: {exc}") from exc
+                raise CollectionError(f"cannot finalize collection: {exc}") from exc
 
     @staticmethod
     def _check_saved_episodes(session: dict, raw: dict) -> None:
@@ -183,12 +181,12 @@ class CollectionManager:
         )
         expected = [episode["frames"] for episode in episodes]
         if raw["count"] != len(expected) or raw["lengths"] != expected:
-            raise CollectionError(
-                "saved dataset does not match the collection catalog")
+            raise CollectionError("saved dataset does not match the collection catalog")
 
     def recoveries(self) -> list[dict]:
         return [
-            session for session in self.catalog.sessions()
+            session
+            for session in self.catalog.sessions()
             if session["state"] in {"active", "recoverable"}
         ]
 
@@ -213,8 +211,8 @@ class CollectionManager:
                 )
             else:
                 raise CollectionError(
-                    f"episode count mismatch: raw={raw['count']}, "
-                    f"catalog={catalog_count}")
+                    f"episode count mismatch: raw={raw['count']}, catalog={catalog_count}"
+                )
             repaired = self.catalog.session(session_id)
             self._check_saved_episodes(repaired, raw)
             return self.catalog.finalize_session(session_id, "ready")
@@ -225,16 +223,14 @@ class CollectionManager:
             session = self.catalog.session(session_id)
             if session["state"] not in {"active", "recoverable"}:
                 raise CollectionError("session is not recoverable")
-            return self.catalog.finalize_session(
-                session_id, "archived_incomplete")
+            return self.catalog.finalize_session(session_id, "archived_incomplete")
 
     def shutdown(self) -> None:
         with self._lock:
             if self._state == "recording":
                 try:
                     frames = self._recorder.stop()
-                    pending = self.catalog.session(
-                        self._session_id)["pending_episode"]
+                    pending = self.catalog.session(self._session_id)["pending_episode"]
                     if frames > 0:
                         self.catalog.commit_episode(
                             self._session_id,
@@ -247,8 +243,7 @@ class CollectionManager:
                     self._state = "ready"
                 except Exception as exc:  # noqa: BLE001
                     self._error = str(exc)
-                    self.catalog.finalize_session(
-                        self._session_id, "recoverable")
+                    self.catalog.finalize_session(self._session_id, "recoverable")
                     self._detach_recorder()
                     self._idle()
                     return
@@ -276,7 +271,5 @@ class CollectionManager:
             root=session["root"],
             video_backend="pyav",
         )
-        lengths = [
-            int(episode["length"]) for episode in dataset.meta.episodes
-        ]
+        lengths = [int(episode["length"]) for episode in dataset.meta.episodes]
         return {"count": dataset.num_episodes, "lengths": lengths}

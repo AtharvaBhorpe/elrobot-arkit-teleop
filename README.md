@@ -72,12 +72,29 @@ pixi run test               # every offline test suite (no hardware needed)
 pixi run m3-arm             # phone drives the real arm (+ rviz)
 pixi run web                # prints the browser cockpit URL
 pixi run cams               # WRIST_DEV=/dev/videoX EXT_DEV=/dev/videoY
+pixi run replay             # standalone Textual record/manage/replay/export TUI
 pixi run bag                # optional: everything to mcap
 ```
 
 Use **Teleop → Collect** in the cockpit for managed task-labelled recording.
 `pixi run record` remains available for standalone CLI capture, but do not run
 it alongside a managed cockpit collection session.
+
+For the standalone workflow—no cockpit required—run the arm, cameras, and TUI
+in separate terminals:
+
+```bash
+pixi run m3-arm
+WRIST_DEV=/dev/video4 EXT_DEV=/dev/video6 pixi run cams
+pixi run replay
+```
+
+Record needs the phone or another command source plus both fresh camera
+streams. Physical replay pauses phone IK, requires typing `arm`, and refuses
+to start while jog, cockpit, or another `/joint_command` publisher is present.
+Management edits only an adjacent JSON overlay; raw LeRobot datasets remain
+unchanged. Cleaned, versioned exports are written under
+`data/episodes/exports/`.
 
 First time on new hardware: calibrate first — the guided procedure is the
 `/recalibrate` Claude skill, or follow the spec's Calibration section
@@ -92,20 +109,20 @@ First time on new hardware: calibrate first — the guided procedure is the
 | `web` | browser cockpit on :8080 — teleop, managed collection, reversible curation, replay, calibration, LeRobot v3 export; prints its URL ([guide](docs/web-cockpit-guide.md)) |
 | `view`, `m2` | visualization only, no hardware |
 | `cams` / `campick` / `rqt-cam` | camera nodes / identify devices / view feeds |
-| `record` / `bag` | LeRobotDataset episodes / mcap rosbag |
+| `record` / `replay` / `bag` | CLI recorder / standalone episode TUI / mcap rosbag |
 | `bridge` | Foxglove WebSocket on :8765 (`rviz:=false` to drop rviz) |
 | `ticks` | live joint monitor; releases torque (arm goes limp) |
 | `test` / `lint` / `prove-env` | all offline suites / ruff / env import gate |
 
 Tuning knobs as env prefixes: `PORT= SCALE= ORIENT=0 SMOOTH= MAX_VEL=
-FREEZE= GRIP_LOAD_THRESH= GRIP_SQUEEZE= Z_MIN= R_MAX= RVIZ=0
+MAX_ACCEL= ACCEL= FREEZE= GRIP_LOAD_THRESH= GRIP_SQUEEZE= Z_MIN= R_MAX= RVIZ=0
 COLLECTION_ROOT=`.
 
 ## Pipeline status
 
 The collection and curation milestone is implemented and passes the complete
 offline suite. Physical operator validation is still pending: collect a short
-session, curate and visually replay it, run a guarded `0.6×` physical replay,
+session, curate and visually replay it, run a guarded physical replay,
 verify STOP/deadman behavior, then load the exported dataset.
 
 Training and inference are the next phases and remain intentionally Python.

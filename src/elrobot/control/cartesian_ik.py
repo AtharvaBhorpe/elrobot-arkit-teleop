@@ -49,7 +49,7 @@ class CartesianServoIK:
         n_arm: int = 7,
         kp_lin: float = 2.0,
         kp_ang: float = 2.0,
-        max_lin_vel: float = 0.2,     # m/s — half the Franka's; 0.42 m reach
+        max_lin_vel: float = 0.2,  # m/s — half the Franka's; 0.42 m reach
         max_ang_vel: float = 0.9,
         max_joint_vel: float = 2.0,
         damping: float = 1e-3,
@@ -57,7 +57,7 @@ class CartesianServoIK:
         max_sing_boost: float = 10.0,
         lin_tol: float = 1e-3,
         ang_tol: float = 5e-3,
-        frozen: tuple = (),   # joint NAMES held at their seed pose (SO-101 mode)
+        frozen: tuple = (),  # joint NAMES held at their seed pose (SO-101 mode)
     ) -> None:
         self.model = pin.buildModelFromUrdf(urdf_path)
         self.data = self.model.createData()
@@ -75,16 +75,22 @@ class CartesianServoIK:
         # DLS solve runs on the ACTIVE columns only (a zeroed-column solve
         # would also drive sigma_min to 0 and max-boost the damping).
         assert all(f in ARM_JOINTS for f in frozen), frozen
-        self.active = np.array([i for i, n in enumerate(ARM_JOINTS)
-                                if n not in frozen])
-        self.q_ref = None            # null-space posture anchor (see servo)
-        self.kp_posture = 0.5        # gentle: 1/s pull, null-space only
+        self.active = np.array([i for i, n in enumerate(ARM_JOINTS) if n not in frozen])
+        self.q_ref = None  # null-space posture anchor (see servo)
+        self.kp_posture = 0.5  # gentle: 1/s pull, null-space only
         self.kp_lin, self.kp_ang = kp_lin, kp_ang
         self.max_lin_vel, self.max_ang_vel = max_lin_vel, max_ang_vel
         self.max_joint_vel = max_joint_vel
         self.damping = damping
         self.sing_threshold, self.max_sing_boost = sing_threshold, max_sing_boost
         self.lin_tol, self.ang_tol = lin_tol, ang_tol
+
+    def set_frozen(self, frozen: tuple = ()) -> None:
+        assert all(f in ARM_JOINTS for f in frozen), frozen
+        self.active = np.array([i for i, n in enumerate(ARM_JOINTS) if n not in frozen])
+
+    def set_q_ref(self, q_ref=None) -> None:
+        self.q_ref = self.arm_q() if q_ref is None else np.asarray(q_ref, float).copy()
 
     def set_q(self, q) -> None:
         q = np.asarray(q, float)
@@ -106,14 +112,15 @@ class CartesianServoIK:
         err = pin.log6(current.actInv(target)).vector
         lin_err, ang_err = err[:3], err[3:]
 
-        twist = np.concatenate([
-            _clamp_norm(self.kp_lin * lin_err, self.max_lin_vel),
-            _clamp_norm(self.kp_ang * ang_err, self.max_ang_vel),
-        ])
+        twist = np.concatenate(
+            [
+                _clamp_norm(self.kp_lin * lin_err, self.max_lin_vel),
+                _clamp_norm(self.kp_ang * ang_err, self.max_ang_vel),
+            ]
+        )
 
-        J = pin.computeFrameJacobian(self.model, self.data, self.q,
-                                     self.ee_id, pin.LOCAL)
-        Ja = J[:, : self.n_arm][:, self.active]   # active columns only
+        J = pin.computeFrameJacobian(self.model, self.data, self.q, self.ee_id, pin.LOCAL)
+        Ja = J[:, : self.n_arm][:, self.active]  # active columns only
 
         task = 6 if len(self.active) >= 6 else 3
 
@@ -125,10 +132,8 @@ class CartesianServoIK:
             _, S, Vt = np.linalg.svd(Jm, full_matrices=True)
             damp = self.damping
             if S[-1] < self.sing_threshold:
-                damp *= min(self.sing_threshold / (S[-1] + 1e-9),
-                            self.max_sing_boost)
-            dq = Jm.T @ np.linalg.solve(
-                Jm @ Jm.T + damp * np.eye(Jm.shape[0]), v)
+                damp *= min(self.sing_threshold / (S[-1] + 1e-9), self.max_sing_boost)
+            dq = Jm.T @ np.linalg.solve(Jm @ Jm.T + damp * np.eye(Jm.shape[0]), v)
             return dq, S, Vt
 
         n_act = len(self.active)
@@ -141,9 +146,9 @@ class CartesianServoIK:
             if self.q_ref is not None:
                 Vr = Vt[: np.count_nonzero(S > self.sing_threshold)]
                 N = np.eye(n_act) - Vr.T @ Vr
-                dq_act += N @ (self.kp_posture
-                               * (self.q_ref[self.active]
-                                  - self.q[: self.n_arm][self.active]))
+                dq_act += N @ (
+                    self.kp_posture * (self.q_ref[self.active] - self.q[: self.n_arm][self.active])
+                )
         else:
             # Underactuated (SO-101 mode): TASK-PRIORITY. Position solved
             # exactly as the primary task (3 dims, 5 joints); orientation is
@@ -152,22 +157,23 @@ class CartesianServoIK:
             # (Equal-weight 6-DOF least squares stalled 37 mm short.)
             dq1, Sp, Vtp = _dls(Ja[:3], twist[:3])
             Vr = Vtp[: np.count_nonzero(Sp > self.sing_threshold)]
-            Np = np.eye(n_act) - Vr.T @ Vr           # exact position null space
+            Np = np.eye(n_act) - Vr.T @ Vr  # exact position null space
             Jo = Ja[3:] @ Np
             dq2, _, _ = _dls(Jo, twist[3:] - Ja[3:] @ dq1)
             dq_act = dq1 + Np @ dq2
             # no posture anchor: 3 + 2 task dims consume all 5 joints
 
-        dq = np.zeros(self.n_arm)                 # frozen joints never move
-        dq[self.active] = np.clip(dq_act, -self.max_joint_vel,
-                                  self.max_joint_vel)
+        dq = np.zeros(self.n_arm)  # frozen joints never move
+        dq[self.active] = np.clip(dq_act, -self.max_joint_vel, self.max_joint_vel)
 
         self.q[: self.n_arm] = np.clip(
             self.q[: self.n_arm] + dq * dt,
-            self.q_min[: self.n_arm], self.q_max[: self.n_arm],
+            self.q_min[: self.n_arm],
+            self.q_max[: self.n_arm],
         )
-        return (np.linalg.norm(lin_err) < self.lin_tol
-                and (task == 3 or np.linalg.norm(ang_err) < self.ang_tol))
+        return np.linalg.norm(lin_err) < self.lin_tol and (
+            task == 3 or np.linalg.norm(ang_err) < self.ang_tol
+        )
 
 
 if __name__ == "__main__":
@@ -185,7 +191,7 @@ if __name__ == "__main__":
     dt = 1 / 100
     for step in range(2000):
         if ik.servo(target, dt):
-            print(f"reached in {step} steps ({step*dt:.2f} s)")
+            print(f"reached in {step} steps ({step * dt:.2f} s)")
             break
     else:
         raise SystemExit("FAIL: did not converge in 2000 steps")
@@ -194,8 +200,12 @@ if __name__ == "__main__":
     assert err < 2e-3, err
     lo, hi = ik.q_min[:7], ik.q_max[:7]
     assert (ik.arm_q() >= lo).all() and (ik.arm_q() <= hi).all()
+    ik.set_frozen(("rev_motor_03",))
+    assert ik.active.tolist() == [0, 1, 3, 4, 5, 6]
+    ik.set_frozen(())
+    assert ik.active.tolist() == list(range(7))
     print("final TCP :", np.round(final.translation, 4))
-    print(f"pos error : {err*1000:.2f} mm, all joints within URDF limits")
+    print(f"pos error : {err * 1000:.2f} mm, all joints within URDF limits")
 
     # Null-space anchor mechanism test - the contract is exactly two-sided:
     # with q_ref far from the current posture and the target pinned at the
@@ -209,17 +219,18 @@ if __name__ == "__main__":
     hold = s.ee_pose()
     q_ref = q0[:7].copy()
     q_ref[2] += 0.6  # ask for a very different elbow-ish posture
-    s.q_ref = q_ref
+    s.set_q_ref(q_ref)
     d0 = float(np.linalg.norm(s.arm_q() - q_ref))
     for _ in range(2000):
         s.servo(hold, dt)
     d1 = float(np.linalg.norm(s.arm_q() - q_ref))
-    tcp_moved = float(np.linalg.norm(s.ee_pose().translation
-                                     - hold.translation))
-    print(f"null-space anchor: posture distance to q_ref {d0:.3f} -> "
-          f"{d1:.3f} rad while TCP moved {tcp_moved*1000:.2f} mm")
+    tcp_moved = float(np.linalg.norm(s.ee_pose().translation - hold.translation))
+    print(
+        f"null-space anchor: posture distance to q_ref {d0:.3f} -> "
+        f"{d1:.3f} rad while TCP moved {tcp_moved * 1000:.2f} mm"
+    )
     assert d1 < d0 - 0.05, "anchor did not move the posture toward q_ref"
-    assert tcp_moved < 3e-3, f"anchor disturbed the TCP: {tcp_moved*1000:.1f} mm"
+    assert tcp_moved < 3e-3, f"anchor disturbed the TCP: {tcp_moved * 1000:.1f} mm"
 
     # SO-101 mode: joints 3 and 5 frozen -> 5 DoF, task-priority servo.
     # Contract: position EXACT always; achievable orientation (wrist
@@ -240,16 +251,15 @@ if __name__ == "__main__":
             t2.rotation = t2.rotation @ pin.utils.rotate(ax, 0.3)
         for _ in range(2000):
             fz.servo(t2, dt)
-        err_f = float(np.linalg.norm(fz.ee_pose().translation
-                                     - t2.translation))
-        ang_f = float(np.linalg.norm(pin.log3(
-            fz.ee_pose().rotation.T @ t2.rotation)))
+        err_f = float(np.linalg.norm(fz.ee_pose().translation - t2.translation))
+        ang_f = float(np.linalg.norm(pin.log3(fz.ee_pose().rotation.T @ t2.rotation)))
         moved = np.abs(fz.arm_q()[[2, 4]] - frozen_before).max()
-        print(f"frozen(3,5) rot={ax or 'none':<4}: pos {err_f*1000:5.1f} mm, "
-              f"ang {np.degrees(ang_f):5.1f} deg, frozen moved {moved:.0e}")
+        print(
+            f"frozen(3,5) rot={ax or 'none':<4}: pos {err_f * 1000:5.1f} mm, "
+            f"ang {np.degrees(ang_f):5.1f} deg, frozen moved {moved:.0e}"
+        )
         assert moved == 0.0, "frozen joints must not move"
-        assert err_f < 5e-3, f"position must stay exact: {err_f*1000:.1f} mm"
+        assert err_f < 5e-3, f"position must stay exact: {err_f * 1000:.1f} mm"
         if ang_max is not None:
-            assert ang_f < ang_max, \
-                f"achievable orientation not tracked: {ang_f:.3f} rad"
+            assert ang_f < ang_max, f"achievable orientation not tracked: {ang_f:.3f} rad"
     print("SELF-TEST PASSED")

@@ -1,12 +1,14 @@
 """elrobot_driver — the only node that touches hardware. All safety lives here.
 
 /joint_command (JointState, by NAME) -> ticks via calibration/urdf_ticks.json
--> slew-limited sync_write. sync_read back -> /joint_states (real arm state).
+-> slew-limited sync_write. The written goal is published on /joint_goal;
+sync_read back -> /joint_states (real arm state).
 
 Safety, enforced every cycle:
-  velocity clamp   slew limiter in tick space: last_sent steps toward the
-                   target by at most vel*dt per joint. Also absorbs a far-off
-                   first command (no startup lurch).
+  motion clamp     acceleration-limited slew in tick space: last_sent ramps
+                   toward vel*dt per joint and brakes near the target. Also
+                   absorbs a far-off first command (no startup lurch). The
+                   sole exception is recovery's present-as-goal hold write.
   workspace box    FK of the commanded q; TCP below z_min or beyond r_max
                    -> hold (table strikes are the real desk hazard).
   sigma_min floor  commanded pose too near singular -> hold.
@@ -17,6 +19,9 @@ Safety, enforced every cycle:
   deadman          no /joint_command for 200 ms -> freeze: latch present
                    position as goal ONCE (re-writing present each cycle would
                    let gravity walk the arm down).
+  transport loss   three consecutive state/goal failures -> discard targets,
+                   reconnect, hold the newly measured pose, then require a
+                   command stamped after recovery before moving again.
 
 Torque-enable sequence: read present -> write present AS GOAL -> enable.
 The arm's first powered act is holding where it already is.
@@ -49,6 +54,8 @@ from elrobot.control.cartesian_ik import (  # noqa: E402
 
 TICKS_PER_RAD = 651.9
 DEADMAN_S = 0.2
+RECONNECT_AFTER_FAILURES = 3
+RECONNECT_RETRY_S = 1.0
 ALL_JOINTS = ARM_JOINTS + [GRIPPER_JOINT]
 
 
@@ -126,6 +133,7 @@ class ElrobotDriver(Node):
         # motion (jitter) and silently ran 23% under the configured velocity.
         self.max_step = {n: args.max_vel * self.dt * TICKS_PER_RAD
                          for n in ARM_JOINTS}
+        self.max_dv = args.max_accel * self.dt**2 * TICKS_PER_RAD
         self.max_step[GRIPPER_JOINT] = (
             args.grip_vel * self.dt * abs(
                 self.conv.t[GRIPPER_JOINT]["closed_ticks"]
@@ -156,12 +164,19 @@ class ElrobotDriver(Node):
         present = self.bus.sync_read("Present_Position", ALL_JOINTS,
                                      normalize=False)
         self.slew_pos = {n: float(v) for n, v in present.items()}  # float acc
+        self.slew_vel = {n: 0.0 for n in ARM_JOINTS}  # ticks per cycle
+        self.slew_target = {n: present[n] for n in ARM_JOINTS}
+        self.brake_bound = {n: None for n in ARM_JOINTS}
         self.last_sent = dict(present)   # last INTEGER goal written
         self.last_present = dict(present)  # physical pose, <=1 cycle stale
         self.prev_grip_phys = present[GRIPPER_JOINT]
         self.target = None               # ticks; None until first command
         self.frozen = False
         self.last_cmd_time = None
+        self.transport_failures = 0
+        self.transport_offline = False
+        self.next_reconnect_at = 0.0
+        self.rearm_after_stamp = None
 
         # gripper current limit BEFORE any torque (spec: motor 8 has latched
         # Overload from being driven past its stop)
@@ -181,15 +196,28 @@ class ElrobotDriver(Node):
 
         self.create_subscription(JointState, "/joint_command", self._on_cmd, 1)
         self.state_pub = self.create_publisher(JointState, "/joint_states", 1)
+        self.goal_pub = self.create_publisher(JointState, "/joint_goal", 1)
         self.create_timer(self.dt, self._tick)
         self.get_logger().info(
             f"driver up: {args.rate:.0f} Hz, vel clamp {args.max_vel} rad/s "
-            f"({self.max_step[ARM_JOINTS[0]]} ticks/cycle), "
+            f"accel clamp {args.max_accel} rad/s^2, "
             f"z_min {args.z_min} m, r_max {args.r_max} m, "
             f"sigma floor {args.sigma_floor}")
 
     # -- command intake ----------------------------------------------------
     def _on_cmd(self, msg: JointState):
+        if self.transport_offline:
+            return  # never queue a target received while the bus is unavailable
+        if self.rearm_after_stamp is not None:
+            stamp = msg.header.stamp
+            barrier = self.rearm_after_stamp
+            if ((stamp.sec == 0 and stamp.nanosec == 0)
+                    or (stamp.sec, stamp.nanosec)
+                    <= (barrier.sec, barrier.nanosec)):
+                self.get_logger().warning(
+                    "ignoring command queued before transport recovery")
+                return
+            self.rearm_after_stamp = None
         q_arm, ticks = {}, {}
         for name, pos in zip(msg.name, msg.position):
             if name in self.conv.t and name != GRIPPER_JOINT:
@@ -226,6 +254,7 @@ class ElrobotDriver(Node):
         pose (<= 1 cycle stale) if the bus cannot be read right now.
         """
         self.frozen = True
+        self.slew_vel = {n: 0.0 for n in ARM_JOINTS}
         try:
             present = self.bus.sync_read("Present_Position", ALL_JOINTS,
                                          normalize=False, num_retry=2)
@@ -235,6 +264,8 @@ class ElrobotDriver(Node):
                 f"freeze: bus read failed ({e}); latching last known pose")
             self._recover_bus()
             self.target = dict(self.last_present)
+        self.slew_target = {n: self.target[n] for n in ARM_JOINTS}
+        self.brake_bound = {n: None for n in ARM_JOINTS}
 
     def _recover_bus(self):
         """Post-failure hygiene: release the latched port lock and drain RX.
@@ -251,6 +282,69 @@ class ElrobotDriver(Node):
             ph.ser.reset_input_buffer()
         except Exception as e:  # noqa: BLE001
             self.get_logger().error(f"bus recovery failed: {e}")
+
+    def _transport_failed(self, operation, error):
+        """Count transport failures; after three, discard the active target."""
+        self.transport_failures += 1
+        self._recover_bus()
+        if self.transport_failures < RECONNECT_AFTER_FAILURES:
+            return
+        if self.transport_offline:
+            return
+        self.transport_offline = True
+        self.frozen = True
+        self.target = dict(self.last_present)
+        self.slew_vel = {n: 0.0 for n in ARM_JOINTS}
+        self.slew_target = {n: self.target[n] for n in ARM_JOINTS}
+        self.brake_bound = {n: None for n in ARM_JOINTS}
+        self.last_cmd_time = None
+        self.next_reconnect_at = time.monotonic()
+        self.get_logger().error(
+            f"transport offline after {self.transport_failures} failures "
+            f"({operation}: {error}); waiting to reconnect")
+
+    def _attempt_reconnect(self):
+        """Reconnect, replace any stale target with present pose, then hold."""
+        if time.monotonic() < self.next_reconnect_at:
+            return
+        try:
+            if self.bus.is_connected:
+                self.bus.disconnect(disable_torque=False)
+            self.bus.connect(handshake=True)
+            present = self.bus.sync_read("Present_Position", ALL_JOINTS,
+                                         normalize=False, num_retry=2)
+            if self.torque:
+                # Recovery safety exception to normal slew writes: the goal
+                # is the just-read physical pose, so it can only hold.
+                self.bus.sync_write("Goal_Position", present, normalize=False)
+        except Exception as e:  # noqa: BLE001
+            self._recover_bus()
+            self.next_reconnect_at = time.monotonic() + RECONNECT_RETRY_S
+            self.get_logger().warning(f"reconnect failed: {e}")
+            return
+        self.slew_pos = {n: float(v) for n, v in present.items()}
+        self.slew_vel = {n: 0.0 for n in ARM_JOINTS}
+        self.slew_target = {n: present[n] for n in ARM_JOINTS}
+        self.brake_bound = {n: None for n in ARM_JOINTS}
+        self.last_sent = dict(present)
+        self.last_present = dict(present)
+        self.prev_grip_phys = present[GRIPPER_JOINT]
+        self.target = dict(present)
+        self.frozen = True
+        self.last_cmd_time = None
+        self.rearm_after_stamp = self.get_clock().now().to_msg()
+        self.transport_failures = 0
+        self.transport_offline = False
+        self.get_logger().info("transport reconnected; holding present pose")
+
+    def _publish_goal(self):
+        goal = JointState()
+        goal.header.stamp = self.get_clock().now().to_msg()
+        goal.name = list(ALL_JOINTS)
+        goal.position = [
+            self.conv.arm_q(n, self.last_sent[n]) for n in ARM_JOINTS
+        ] + [self.conv.grip_q(self.last_sent[GRIPPER_JOINT])]
+        self.goal_pub.publish(goal)
 
     def _grasp_logic(self, present):
         """Contact-detecting gripper: stop at the object, keep pressing.
@@ -308,6 +402,10 @@ class ElrobotDriver(Node):
 
     # -- the 100 Hz cycle --------------------------------------------------
     def _tick(self):
+        if self.transport_offline:
+            self._attempt_reconnect()
+            return
+
         # deadman: command stream went quiet while we had a live target
         if (self.target is not None and not self.frozen
                 and self.last_cmd_time is not None
@@ -318,23 +416,65 @@ class ElrobotDriver(Node):
         # slew toward target and write (unless smoke mode / no command yet)
         if self.target is not None and self.torque:
             self._grasp_logic(self.last_present)
+            old_pos = dict(self.slew_pos)
+            old_vel = dict(self.slew_vel)
+            old_target = dict(self.slew_target)
+            old_bound = dict(self.brake_bound)
             out = {}
             for n in ALL_JOINTS:
                 tgt = (self.grasp_goal
                        if n == GRIPPER_JOINT and self.grasp_goal is not None
                        else self.target[n])
-                self.slew_pos[n] += float(np.clip(
-                    tgt - self.slew_pos[n],
-                    -self.max_step[n], self.max_step[n]))
+                error = tgt - self.slew_pos[n]
+                if n in self.slew_vel:
+                    if tgt != self.slew_target[n]:
+                        if (self.brake_bound[n] is None
+                                and self.slew_vel[n] != 0
+                                and self.slew_vel[n] * error <= 0):
+                            self.brake_bound[n] = self.slew_target[n]
+                        self.slew_target[n] = tgt
+                    # Leave enough distance for the next step plus a full
+                    # discrete deceleration ramp; the continuous sqrt(2ad)
+                    # estimate stops one cycle too late at 100 Hz.
+                    brake_speed = (
+                        np.sqrt(self.max_dv**2
+                                + 2 * self.max_dv * abs(error))
+                        - self.max_dv)
+                    desired = np.sign(error) * min(
+                        self.max_step[n], brake_speed)
+                    self.slew_vel[n] += float(np.clip(
+                        desired - self.slew_vel[n],
+                        -self.max_dv, self.max_dv))
+                    braking_away = (
+                        self.brake_bound[n] is not None
+                        and self.slew_vel[n] != 0
+                        and self.slew_vel[n] * error <= 0)
+                    travel = ((self.brake_bound[n] - self.slew_pos[n])
+                              if braking_away else error)
+                    step = float(np.clip(
+                        self.slew_vel[n], min(0.0, travel), max(0.0, travel)))
+                    self.slew_pos[n] += step
+                    if not braking_away:
+                        self.brake_bound[n] = None
+                    if not braking_away and step == error:
+                        self.slew_vel[n] = 0.0
+                else:
+                    self.slew_pos[n] += float(np.clip(
+                        error, -self.max_step[n], self.max_step[n]))
                 out[n] = int(round(self.slew_pos[n]))
             if out != self.last_sent:
                 try:
                     self.bus.sync_write("Goal_Position", out, normalize=False)
                 except Exception as e:  # noqa: BLE001
+                    self.slew_pos = old_pos
+                    self.slew_vel = old_vel
+                    self.slew_target = old_target
+                    self.brake_bound = old_bound
                     self.get_logger().warning(f"sync_write failed: {e}")
-                    self._recover_bus()
-                    return  # don't advance last_sent past what was written
-            self.last_sent = out
+                    self._transport_failed("goal write", e)
+                    return
+                self.last_sent = out
+                self._publish_goal()
 
         # real state out
         try:
@@ -342,8 +482,9 @@ class ElrobotDriver(Node):
                                          normalize=False, num_retry=2)
         except Exception as e:  # noqa: BLE001 - keep the loop alive on a bad read
             self.get_logger().warning(f"sync_read failed: {e}")
-            self._recover_bus()
+            self._transport_failed("state read", e)
             return
+        self.transport_failures = 0
         self.last_present = dict(present)
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -363,6 +504,8 @@ def build_args(argv=None):
     p.add_argument("--rate", type=float, default=100.0)
     p.add_argument("--max-vel", dest="max_vel", type=float, default=0.6,
                    help="per-joint velocity clamp, rad/s (M3 conservative)")
+    p.add_argument("--max-accel", dest="max_accel", type=float, default=6.0,
+                   help="per-joint acceleration clamp, rad/s^2")
     p.add_argument("--grip-vel", dest="grip_vel", type=float, default=2.0)
     p.add_argument("--grip-torque-limit", type=int, default=300,
                    help="Torque_Limit register for motor 8 (0-1000)")
@@ -392,6 +535,8 @@ def build_args(argv=None):
                    help="smoke mode: never enable torque, never write goals")
     p.set_defaults(torque=True)
     args, _ = p.parse_known_args(argv)
+    if args.max_accel <= 0:
+        p.error("--max-accel must be positive")
     return args
 
 

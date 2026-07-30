@@ -24,9 +24,13 @@ class FakeBridge:
         self.latest_q = {"rev_motor_01": 0.1, "rev_motor_08": 0.5}
         self.latest_stamp = time.monotonic()
         self.control_on = False
-        self.published = []          # (dict) commands captured
+        self.teleop_mode = "7dof"
+        self.published = []  # (dict) commands captured
+        self.modes = []
+        self.latest_jpeg = {}
         self.record_status = None
         self.record_stamp = 0.0
+        self.driver_alive = lambda: False
 
     def commanders(self):
         return 0
@@ -34,11 +38,15 @@ class FakeBridge:
     def publish_command(self, positions: dict):
         self.published.append(dict(positions))
 
+    def publish_mode(self, mode: str):
+        self.modes.append(mode)
+
     def record_status_fresh(self):
         # Must mirror WebBridge: the WS sender calls this every tick, and a
         # missing method raises inside that task, killing the state stream
         # with no error visible to the client - the socket just goes quiet.
         import elrobot.web.server as srv
+
         return srv.WebBridge.record_status_fresh(self)
 
 
@@ -91,28 +99,70 @@ def _collection_client():
 
 def test_task_and_collection_api():
     c, made = _collection_client()
-    task = c.post("/api/tasks", json={
-        "name": "Pick red cube",
-        "instruction": "Pick up the red cube.",
-    }).json()
+    task = c.post(
+        "/api/tasks",
+        json={
+            "name": "Pick red cube",
+            "instruction": "Pick up the red cube.",
+        },
+    ).json()
     assert c.get("/api/tasks").json()["tasks"][0]["id"] == task["id"]
-    assert c.post("/api/collection/session/start", json={
-        "task_id": task["id"], "name": "morning",
-    }).json()["state"] == "ready"
-    assert c.post("/api/collection/episode/start", json={
-        "task_id": task["id"],
-    }).json()["state"] == "recording"
+    assert (
+        c.post(
+            "/api/collection/session/start",
+            json={
+                "task_id": task["id"],
+                "name": "morning",
+            },
+        ).json()["state"]
+        == "ready"
+    )
+    assert (
+        c.post(
+            "/api/collection/episode/start",
+            json={
+                "task_id": task["id"],
+            },
+        ).json()["state"]
+        == "recording"
+    )
     assert c.post("/api/collection/episode/stop").json()["state"] == "ready"
     assert c.post("/api/collection/session/finish").json()["state"] == "idle"
     assert made[0].episodes == 1
 
 
+def test_finish_session_keeps_active_episode():
+    c, made = _collection_client()
+    task = c.post("/api/tasks", json={"name": "Push", "instruction": "Push."}).json()
+    c.post("/api/collection/session/start", json={"task_id": task["id"]})
+    c.post("/api/collection/episode/start", json={"task_id": task["id"]})
+    assert c.post("/api/collection/session/finish").json()["state"] == "idle"
+    assert made[0].episodes == 1
+
+
+def test_finish_session_discards_unsaved_active_episode():
+    c, made = _collection_client()
+    task = c.post("/api/tasks", json={"name": "Push", "instruction": "Push."}).json()
+    c.post("/api/collection/session/start", json={"task_id": task["id"]})
+    c.post("/api/collection/episode/start", json={"task_id": task["id"]})
+    made[0].stop = lambda: (_ for _ in ()).throw(ValueError("size key not found"))
+    assert c.post("/api/collection/session/finish").json()["state"] == "idle"
+    assert made[0].recording is False
+
+
 def test_collection_api_errors_and_websocket_state():
     c, _ = _collection_client()
     assert c.post("/api/collection/episode/stop").status_code == 409
-    assert c.post("/api/tasks", json={
-        "name": "", "instruction": "Pick.",
-    }).status_code == 422
+    assert (
+        c.post(
+            "/api/tasks",
+            json={
+                "name": "",
+                "instruction": "Pick.",
+            },
+        ).status_code
+        == 422
+    )
     with c.websocket_connect("/ws") as ws:
         assert "collection" in ws.receive_json()
 
@@ -123,10 +173,32 @@ def test_control_toggle_and_seed():
     c = TestClient(create_app(b))
     r = c.post("/api/control", json={"on": True})
     assert r.json()["control_on"] is True
-    assert r.json()["seed"]["rev_motor_01"] == 0.1   # seeds from current pose
+    assert r.json()["seed"]["rev_motor_01"] == 0.1  # seeds from current pose
     assert b.control_on is True
+    assert b.modes[-1] == "web"
     c.post("/api/control", json={"on": False})
     assert b.control_on is False
+    assert b.modes[-1] == "7dof"
+
+
+def test_runtime_mode_api_publishes_phone_mode():
+    b = FakeBridge()
+    c = TestClient(create_app(b))
+    assert c.post("/api/mode", json={"mode": "5dof"}).json() == {"mode": "5dof"}
+    assert b.teleop_mode == "5dof"
+    assert b.modes[-1] == "5dof"
+    assert c.post("/api/mode", json={"mode": "web"}).status_code == 400
+
+
+def test_mode_change_during_web_control_waits_until_control_off():
+    b = FakeBridge()
+    b.driver_alive = lambda: True
+    c = TestClient(create_app(b))
+    c.post("/api/control", json={"on": True})
+    c.post("/api/mode", json={"mode": "6dof"})
+    assert b.modes[-1] == "web"
+    c.post("/api/control", json={"on": False})
+    assert b.modes[-1] == "6dof"
 
 
 def test_control_requires_fresh_driver_state():
@@ -166,7 +238,7 @@ def test_ws_streams_state_and_gates_commands():
         assert first["type"] == "state" and "rev_motor_01" in first["joints"]
         # command while control OFF -> dropped, not published
         ws.send_json({"type": "cmd", "positions": {"rev_motor_01": 0.5}})
-        ws.receive_json()                      # let the loop cycle
+        ws.receive_json()  # let the loop cycle
         assert b.published == []
         # flip on, command flows
         b.control_on = True
@@ -187,7 +259,7 @@ def test_mjpeg_placeholder_when_no_camera():
     import asyncio
 
     b = FakeBridge()
-    b.latest_jpeg = {}                     # no camera has published
+    b.latest_jpeg = {}  # no camera has published
     app = create_app(b)
     route = next(r for r in app.routes if getattr(r, "path", None) == "/cam/{name}")
 
@@ -201,7 +273,7 @@ def test_mjpeg_placeholder_when_no_camera():
     resp, chunk = asyncio.run(first_frame("wrist"))
     assert resp.status_code == 200
     assert "multipart/x-mixed-replace" in resp.media_type
-    assert b"--frame" in chunk and b"\xff\xd8" in chunk   # JPEG SOI
+    assert b"--frame" in chunk and b"\xff\xd8" in chunk  # JPEG SOI
 
     c = TestClient(app)
     assert c.get("/cam/nope").status_code == 404
@@ -219,7 +291,7 @@ def test_cam_frame_endpoint_returns_single_jpeg():
     assert r.status_code == 200
     assert r.headers["content-type"] == "image/jpeg"
     assert r.headers["cache-control"] == "no-store"
-    assert r.content[:2] == b"\xff\xd8"       # JPEG SOI, not multipart-wrapped
+    assert r.content[:2] == b"\xff\xd8"  # JPEG SOI, not multipart-wrapped
     assert c.get("/cam/nope/frame").status_code == 404
 
 
@@ -242,7 +314,7 @@ def test_static_urdf_and_meshes_served():
     # URDFLoader.js - see server.py's comment on the /urdf route)
     assert 'filename="meshes/' in r.text
     assert 'filename="/meshes/' not in r.text
-    assert "data/viz_meshes" not in r.text          # no filesystem paths leak
+    assert "data/viz_meshes" not in r.text  # no filesystem paths leak
     one = r.text.split('filename="meshes/')[1].split('"')[0]
     assert c.get(f"/meshes/{one}").status_code == 200
 
@@ -251,18 +323,14 @@ def test_viz_mesh_format_has_a_browser_loader():
     """The display URDF consists of DAE meshes, so the vendored loader must
     retain COLLADA support rather than silently render only the grid."""
     loader = (
-        Path(__file__).resolve().parents[1]
-        / "src/elrobot/web/static/vendor/URDFLoader.js"
+        Path(__file__).resolve().parents[1] / "src/elrobot/web/static/vendor/URDFLoader.js"
     ).read_text()
     assert "ColladaLoader" in loader
     assert r"/\.dae$/i" in loader
 
 
 def test_scene_default_view_is_modestly_zoomed_out():
-    scene = (
-        Path(__file__).resolve().parents[1]
-        / "src/elrobot/web/static/scene.js"
-    ).read_text()
+    scene = (Path(__file__).resolve().parents[1] / "src/elrobot/web/static/scene.js").read_text()
     assert "dist = 0.9" in scene
 
 
@@ -287,8 +355,7 @@ def _calib_client(positions=None):
     # sync_read; a partially-seeded bus is the failure case tested below
     positions = positions or {f"rev_motor_{i:02d}": 2000 for i in range(1, 9)}
     bus = StubBus(positions)
-    return TestClient(create_app(b, bus_factory=lambda: bus,
-                                 backup_root=_BACKUPS)), bus
+    return TestClient(create_app(b, bus_factory=lambda: bus, backup_root=_BACKUPS)), bus
 
 
 def test_calib_eeprom_needs_typed_confirmation():
@@ -296,7 +363,7 @@ def test_calib_eeprom_needs_typed_confirmation():
     assert c.post("/api/calib/start").json()["state"] == "preflight"
     # EEPROM comes FIRST, straight from preflight - before any sweep
     r = c.post("/api/calib/eeprom", json={"confirm": "erase"})
-    assert r.status_code == 400                       # exact string required
+    assert r.status_code == 400  # exact string required
     r = c.post("/api/calib/eeprom", json={"confirm": "ERASE"})
     assert r.status_code == 200 and r.json()["state"] == "homed"
 
@@ -323,17 +390,17 @@ def test_calib_surfaces_sweep_failure_instead_of_advancing():
     empty list that rendered as blank (looking like a pass), the state still
     advanced, and the destructive write sat right after it."""
     positions = {f"rev_motor_{i:02d}": 2000 for i in range(1, 9)}
-    del positions["rev_motor_04"]                    # motor 4 never answers
+    del positions["rev_motor_04"]  # motor 4 never answers
     c, _ = _calib_client(positions)
     c.post("/api/calib/start")
     c.post("/api/calib/eeprom", json={"confirm": "ERASE"})
     c.post("/api/calib/sweep/begin")
     time.sleep(0.3)
     r = c.post("/api/calib/sweep/end")
-    assert r.status_code == 500                      # loud, not silent
+    assert r.status_code == 500  # loud, not silent
     state = c.get("/api/calib/state").json()
     assert state["error"] and "rev_motor_04" in state["error"]
-    assert state["state"] != "gate"                  # did NOT advance
+    assert state["state"] != "gate"  # did NOT advance
 
 
 def test_calib_finish_refuses_partial_table():
@@ -344,7 +411,7 @@ def test_calib_finish_refuses_partial_table():
     c.post("/api/calib/eeprom", json={"confirm": "ERASE"})
     c.post("/api/calib/sweep/begin")
     time.sleep(0.15)
-    c.post("/api/calib/sweep/end")                   # -> gate (05/07 missing)
+    c.post("/api/calib/sweep/end")  # -> gate (05/07 missing)
     # jump straight at finish without the full-turn sweeps
     c.post("/api/calib/sign", json={"joint": "rev_motor_01", "flip": False})
     r = c.post("/api/calib/finish", json={"out": "/tmp/should-not-exist.json"})
@@ -362,11 +429,10 @@ def test_calib_start_disconnects_bus_if_setup_fails_partway():
     b.driver_alive = lambda: False
     bus = StubBus({f"rev_motor_{i:02d}": 2000 for i in range(1, 9)})
     bus.disable_torque = lambda: (_ for _ in ()).throw(OSError("bus glitch"))
-    c = TestClient(create_app(b, bus_factory=lambda: bus,
-                             backup_root=_BACKUPS))
+    c = TestClient(create_app(b, bus_factory=lambda: bus, backup_root=_BACKUPS))
     r = c.post("/api/calib/start")
     assert r.status_code == 409
-    assert bus.connected is False          # released, not leaked
+    assert bus.connected is False  # released, not leaked
 
 
 def test_calib_finish_does_not_write_table_when_final_read_fails():
@@ -376,10 +442,11 @@ def test_calib_finish_does_not_write_table_when_final_read_fails():
     c, bus = _calib_client()
     c.post("/api/calib/start")
     c.post("/api/calib/eeprom", json={"confirm": "ERASE"})
-    for _ in range(3):                     # arm sweep + both full-turn joints
+    for _ in range(3):  # arm sweep + both full-turn joints
         c.post("/api/calib/sweep/begin")
         time.sleep(0.15)
         c.post("/api/calib/sweep/end")
+
     # Installed only now, after the sweeps: the very next sync_read is
     # finish()'s final pose read, which is the one that must not be able to
     # leave a written table behind.
@@ -390,7 +457,7 @@ def test_calib_finish_does_not_write_table_when_final_read_fails():
     scratch = tempfile.mktemp(suffix=".json")
     r = c.post("/api/calib/finish", json={"out": scratch})
     assert r.status_code == 500
-    assert not Path(scratch).exists()      # table NOT written
+    assert not Path(scratch).exists()  # table NOT written
     assert "NOT written" in c.get("/api/calib/state").json()["error"]
 
 
@@ -400,7 +467,7 @@ def test_calib_abort_releases_the_serial_port():
     assert bus.connected is True
     r = c.post("/api/calib/abort")
     assert r.status_code == 200 and r.json()["state"] == "idle"
-    assert bus.connected is False          # driver can have the port back
+    assert bus.connected is False  # driver can have the port back
 
 
 def test_record_status_goes_stale_when_recorder_dies():
@@ -411,9 +478,9 @@ def test_record_status_goes_stale_when_recorder_dies():
     b = FakeBridge()
     b.record_status = {"recording": True, "episodes": 0, "frames": 42}
     b.record_stamp = time.monotonic()
-    assert b.record_status_fresh() == b.record_status      # fresh
+    assert b.record_status_fresh() == b.record_status  # fresh
     b.record_stamp = time.monotonic() - (srv.RECORD_STALE_S + 1)
-    assert b.record_status_fresh() is None                 # expired
+    assert b.record_status_fresh() is None  # expired
 
 
 def test_only_first_ws_client_may_command():
@@ -431,12 +498,12 @@ def test_only_first_ws_client_may_command():
     b.driver_alive = lambda: True
     b.control_on = True
     app = create_app(b)
-    tab_a, tab_b = object(), object()          # stand-ins for two sockets
+    tab_a, tab_b = object(), object()  # stand-ins for two sockets
 
     app.state.client_joined(tab_a)
     app.state.client_joined(tab_b)
-    assert app.state.may_command(tab_a) is True     # first in owns control
-    assert app.state.may_command(tab_b) is False    # second is monitor-only
+    assert app.state.may_command(tab_a) is True  # first in owns control
+    assert app.state.may_command(tab_b) is False  # second is monitor-only
 
     # owner leaves -> the remaining tab is promoted, not left locked out
     app.state.client_gone(tab_a)
@@ -457,11 +524,12 @@ def test_control_resets_when_last_client_disconnects():
     app.state.client_joined(tab)
     b.control_on = True
     app.state.client_gone(tab)
-    assert b.control_on is False       # authoritative server-side reset
+    assert b.control_on is False  # authoritative server-side reset
 
 
 def test_physical_replay_disarms_when_last_client_disconnects():
-    app = create_app(FakeBridge())
+    b = FakeBridge()
+    app = create_app(b)
     tab = object()
     app.state.client_joined(tab)
     app.state.player.armed = True
@@ -469,6 +537,7 @@ def test_physical_replay_disarms_when_last_client_disconnects():
     app.state.client_gone(tab)
     assert app.state.player.status()["armed"] is False
     assert app.state.player.status()["phase"] == "idle"
+    assert b.modes[-1] == "7dof"
 
 
 def test_calib_start_reports_port_open_failure_cleanly():
@@ -478,10 +547,9 @@ def test_calib_start_reports_port_open_failure_cleanly():
     def boom():
         raise OSError("[Errno 16] Device or resource busy: '/dev/ttyACM0'")
 
-    c = TestClient(create_app(b, bus_factory=boom,
-                              backup_root=_BACKUPS))
+    c = TestClient(create_app(b, bus_factory=boom, backup_root=_BACKUPS))
     r = c.post("/api/calib/start")
-    assert r.status_code == 409                      # not an opaque 500
+    assert r.status_code == 409  # not an opaque 500
     assert "busy" in r.json()["detail"]
 
 
@@ -489,10 +557,10 @@ def test_calib_full_flow_writes_table():
     c, bus = _calib_client()
     c.post("/api/calib/start")
     # M1a order: park -> EEPROM homing write -> THEN sweep the ranges
-    c.post("/api/calib/eeprom", json={"confirm": "ERASE"})   # -> homed
+    c.post("/api/calib/eeprom", json={"confirm": "ERASE"})  # -> homed
     c.post("/api/calib/sweep/begin")
     time.sleep(0.15)
-    c.post("/api/calib/sweep/end")                    # -> gate
+    c.post("/api/calib/sweep/end")  # -> gate
 
     # M1b phase A: sweep each full-turn joint (05 then 07)
     r = c.post("/api/calib/sweep/begin")
@@ -503,7 +571,7 @@ def test_calib_full_flow_writes_table():
     assert r.json()["state"] == "fullturn"
     time.sleep(0.15)
     r = c.post("/api/calib/sweep/end")
-    assert r.json()["state"] == "signs"                # both full-turn joints done
+    assert r.json()["state"] == "signs"  # both full-turn joints done
 
     for i in range(1, 8):
         c.post("/api/calib/sign", json={"joint": f"rev_motor_{i:02d}", "flip": False})
@@ -519,14 +587,17 @@ def test_calib_full_flow_writes_table():
         assert body["state"] == "done"
         assert set(body["table"]) == {f"rev_motor_{i:02d}" for i in range(1, 9)}
         assert body["fk"]["height_m"] is not None
-        assert bus.connected is False                  # disconnected on finish
-        assert Path(scratch).exists()                  # wrote to the override, not the real file
+        assert bus.connected is False  # disconnected on finish
+        assert Path(scratch).exists()  # wrote to the override, not the real file
     finally:
         Path(scratch).unlink(missing_ok=True)
 
 
 def _tiny_dataset(
-    root: Path, episodes=2, frames=6, repo_id="local/replay_fixture",
+    root: Path,
+    episodes=2,
+    frames=6,
+    repo_id="local/replay_fixture",
 ):
     """Build a small dataset of our own rather than reusing whatever
     tests/test_recorder.py happened to leave in data/test_episodes. That
@@ -536,28 +607,49 @@ def _tiny_dataset(
     repo_id that only ever existed on disk."""
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     import numpy as np
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset  # type: ignore[import-not-found]
+
     feats = {
-        "observation.state": {"dtype": "float32", "shape": (8,),
-                              "names": [f"rev_motor_{i:02d}" for i in range(1, 9)]},
-        "action": {"dtype": "float32", "shape": (8,),
-                   "names": [f"rev_motor_{i:02d}" for i in range(1, 9)]},
-        "observation.images.wrist": {"dtype": "video", "shape": (48, 64, 3),
-                                     "names": ["height", "width", "channels"]},
-        "observation.images.external": {"dtype": "video", "shape": (48, 64, 3),
-                                        "names": ["height", "width", "channels"]},
+        "observation.state": {
+            "dtype": "float32",
+            "shape": (8,),
+            "names": [f"rev_motor_{i:02d}" for i in range(1, 9)],
+        },
+        "action": {
+            "dtype": "float32",
+            "shape": (8,),
+            "names": [f"rev_motor_{i:02d}" for i in range(1, 9)],
+        },
+        "observation.images.wrist": {
+            "dtype": "video",
+            "shape": (48, 64, 3),
+            "names": ["height", "width", "channels"],
+        },
+        "observation.images.external": {
+            "dtype": "video",
+            "shape": (48, 64, 3),
+            "names": ["height", "width", "channels"],
+        },
     }
-    ds = LeRobotDataset.create(repo_id=repo_id, fps=30,
-                               features=feats, root=str(root),
-                               robot_type="elrobot", video_backend="pyav")
+    ds = LeRobotDataset.create(
+        repo_id=repo_id,
+        fps=30,
+        features=feats,
+        root=str(root),
+        robot_type="elrobot",
+        video_backend="pyav",
+    )
     for ep in range(episodes):
         for k in range(frames):
-            ds.add_frame({
-                "observation.state": np.full(8, 0.1 * (k + 1), np.float32),
-                "action": np.full(8, 0.2, np.float32),
-                "observation.images.wrist": np.full((48, 64, 3), 50, np.uint8),
-                "observation.images.external": np.full((48, 64, 3), 200, np.uint8),
-                "task": "fixture"})
+            ds.add_frame(
+                {
+                    "observation.state": np.full(8, 0.1 * (k + 1), np.float32),
+                    "action": np.full(8, 0.2, np.float32),
+                    "observation.images.wrist": np.full((48, 64, 3), 50, np.uint8),
+                    "observation.images.external": np.full((48, 64, 3), 200, np.uint8),
+                    "task": "fixture",
+                }
+            )
         ds.save_episode()
     ds.finalize()
 
@@ -578,33 +670,36 @@ def _curated_client():
     for source_index in range(2):
         catalog.set_pending(session["id"], task["id"])
         catalog.commit_episode(session["id"], source_index, 6)
-    catalog.update_episode(session["id"], 0, {
-        "review": "kept",
-        "trim": {"start_frame": 1, "end_frame_exclusive": 4},
-    })
+    catalog.update_episode(
+        session["id"],
+        0,
+        {
+            "review": "kept",
+            "trim": {"start_frame": 1, "end_frame_exclusive": 4},
+        },
+    )
     catalog.finalize_session(session["id"], "ready")
     bridge = FakeBridge()
     bridge.driver_alive = lambda: True
-    client = TestClient(create_app(
-        bridge,
-        collection_root=root,
-    ))
+    client = TestClient(
+        create_app(
+            bridge,
+            collection_root=root,
+        )
+    )
     return client, bridge, session
 
 
 def test_curated_replay_uses_effective_range():
     c, _, session = _curated_client()
     session_id = session["id"]
-    listing = c.get(
-        f"/api/curation/sessions/{session_id}/episodes").json()
+    listing = c.get(f"/api/curation/sessions/{session_id}/episodes").json()
     assert listing["episodes"][0]["effective_frames"] == 3
 
-    states = c.get(
-        f"/api/curation/episodes/{session_id}/0/states").json()
+    states = c.get(f"/api/curation/episodes/{session_id}/0/states").json()
     assert states["frames"] == 3
 
-    raw = c.get(
-        f"/api/curation/episodes/{session_id}/0/states?raw=true").json()
+    raw = c.get(f"/api/curation/episodes/{session_id}/0/states?raw=true").json()
     assert raw["frames"] == 6
 
 
@@ -622,9 +717,7 @@ def test_physical_replay_accepts_stable_episode_reference():
     player = PhysicalReplay(
         Library(),
         publish=lambda positions: None,
-        current_pose=lambda: {
-            f"rev_motor_{i:02d}": 0.0 for i in range(1, 9)
-        },
+        current_pose=lambda: {f"rev_motor_{i:02d}": 0.0 for i in range(1, 9)},
         driver_alive=lambda: True,
     )
     ref = EpisodeRef("session_test", 2)
@@ -632,30 +725,33 @@ def test_physical_replay_accepts_stable_episode_reference():
     status = player.play(ref)
     assert seen == [ref]
     assert status["total"] == 1
+    assert "speed" not in status
     player.stop()
 
 
 def test_curated_physical_replay_publishes_trimmed_actions():
     c, bridge, session = _curated_client()
-    bridge.latest_q = {
-        f"rev_motor_{i:02d}": 0.2 for i in range(1, 9)
-    }
-    assert c.post(
-        "/api/replay/arm", json={"on": True}).json()["armed"] is True
-    result = c.post("/api/replay/play", json={
-        "session_id": session["id"],
-        "episode": 0,
-        "raw": False,
-        "speed": 1.0,
-    }).json()
+    bridge.latest_q = {f"rev_motor_{i:02d}": 0.2 for i in range(1, 9)}
+    assert c.post("/api/replay/arm", json={"on": True}).json()["armed"] is True
+    result = c.post(
+        "/api/replay/play",
+        json={
+            "session_id": session["id"],
+            "episode": 0,
+            "raw": False,
+        },
+    ).json()
     assert result["total"] == 3
     c.post("/api/replay/stop")
     assert bridge.published
 
-    assert c.patch(
-        f"/api/curation/episodes/{session['id']}/0",
-        json={"notes": "reviewed"},
-    ).status_code == 200
+    assert (
+        c.patch(
+            f"/api/curation/episodes/{session['id']}/0",
+            json={"notes": "reviewed"},
+        ).status_code
+        == 200
+    )
     assert c.get("/api/replay/status").json()["armed"] is False
 
 
@@ -676,6 +772,7 @@ def test_export_api_previews_starts_and_reports_status():
         def status(self, export_id):
             if export_id != "export_test":
                 from elrobot.web.export import ExportError
+
                 raise ExportError("unknown export")
             return {
                 "id": export_id,
@@ -683,14 +780,15 @@ def test_export_api_previews_starts_and_reports_status():
                 "root": "/tmp/training-v001",
             }
 
-    c = TestClient(create_app(
-        FakeBridge(),
-        collection_root=Path(tempfile.mkdtemp()) / "collections",
-        export_service=FakeExports(),
-    ))
+    c = TestClient(
+        create_app(
+            FakeBridge(),
+            collection_root=Path(tempfile.mkdtemp()) / "collections",
+            export_service=FakeExports(),
+        )
+    )
     body = {"name": "Training", "task_ids": ["task_a"]}
-    assert c.post("/api/exports/preview", json=body).json()[
-        "kept_episodes"] == 2
+    assert c.post("/api/exports/preview", json=body).json()["kept_episodes"] == 2
     started = c.post("/api/exports", json=body).json()
     assert started["id"] == "export_test"
     assert c.get("/api/exports/export_test").json()["state"] == "complete"
@@ -698,36 +796,50 @@ def test_export_api_previews_starts_and_reports_status():
 
 
 def test_collection_and_curate_shell_is_served():
-    c = TestClient(create_app(
-        FakeBridge(),
-        collection_root=Path(tempfile.mkdtemp()) / "collections",
-    ))
+    c = TestClient(
+        create_app(
+            FakeBridge(),
+            collection_root=Path(tempfile.mkdtemp()) / "collections",
+        )
+    )
     html = c.get("/").text
     for element_id in (
-        "mode-teleop", "mode-curate", "task-select", "session-start",
-        "episode-start", "session-finish", "curate-task-list",
-        "curate-episode-list", "curate-keep", "curate-reject",
-        "curate-trim-start", "curate-trim-end", "curate-view-raw",
-        "export-open", "joint-plot", "joint-plot-status",
+        "mode-teleop",
+        "mode-curate",
+        "task-select",
+        "session-start",
+        "episode-start",
+        "session-finish",
+        "curate-task-list",
+        "curate-episode-list",
+        "curate-keep",
+        "curate-reject",
+        "curate-trim-start",
+        "curate-trim-end",
+        "curate-view-raw",
+        "export-open",
+        "joint-plot",
+        "joint-plot-status",
         "joint-plot-legend",
     ):
         assert f'id="{element_id}"' in html
+    assert 'id="phys-speed"' not in html
     plot_module = c.get("/static/joint-plot.mjs")
     assert plot_module.status_code == 200
     assert plot_module.headers["cache-control"] == "no-store"
     assert "export function makeJointPlot" in plot_module.text
 
 
+def test_collection_ui_resyncs_after_conflict():
+    javascript = (Path(__file__).resolve().parents[1] / "src/elrobot/web/static/app.js").read_text()
+    assert "await refreshCollection();" in javascript
+    assert "refreshCollection()\n\t.then(refreshTasks)" in javascript
+
+
 def test_metadata_only_curation_updates_do_not_reload_visual_replay():
-    javascript = (
-        Path(__file__).resolve().parents[1]
-        / "src/elrobot/web/static/app.js"
-    ).read_text()
+    javascript = (Path(__file__).resolve().parents[1] / "src/elrobot/web/static/app.js").read_text()
     assert 'const replayChanged = Object.hasOwn(patch, "trim");' in javascript
-    assert (
-        "if (replayChanged && selectedEpisode) await loadCuratedReplay();"
-        in javascript
-    )
+    assert "if (replayChanged && selectedEpisode) await loadCuratedReplay();" in javascript
 
 
 def test_replay_vectors_do_not_decode_video_frames():
@@ -749,13 +861,15 @@ def test_replay_vectors_do_not_decode_video_frames():
         fps = 30
 
         class Meta:
-            episodes = [{
-                "episode_index": 0,
-                "dataset_from_index": 0,
-                "dataset_to_index": 2,
-                "length": 2,
-                "tasks": ["Pick"],
-            }]
+            episodes = [
+                {
+                    "episode_index": 0,
+                    "dataset_from_index": 0,
+                    "dataset_to_index": 2,
+                    "length": 2,
+                    "tasks": ["Pick"],
+                }
+            ]
 
         meta = Meta()
 
@@ -791,9 +905,12 @@ def test_physical_replay_refuses_until_armed():
     """It moves a real arm with nobody on the clutch; playing must never be
     one click away."""
     c, b, session = _physical_client()
-    assert c.post("/api/replay/play",
-                  json={"session_id": session["id"], "episode": 0,
-                        "speed": 0.5}).status_code == 409
+    assert (
+        c.post(
+            "/api/replay/play", json={"session_id": session["id"], "episode": 0}
+        ).status_code
+        == 409
+    )
     assert b.published == []
 
 
@@ -814,9 +931,12 @@ def test_physical_replay_is_exclusive_with_slider_control():
 
     c.post("/api/control", json={"on": False})
     assert c.post("/api/replay/arm", json={"on": True}).json()["armed"] is True
+    assert b.modes[-1] == "web"
     # and now the reverse direction is blocked too
     r = c.post("/api/control", json={"on": True})
     assert r.status_code == 409 and "disarm replay" in r.json()["detail"]
+    assert c.post("/api/replay/arm", json={"on": False}).json()["armed"] is False
+    assert b.modes[-1] == "7dof"
 
 
 def test_control_refusal_carries_a_usable_message():
@@ -830,17 +950,8 @@ def test_control_refusal_carries_a_usable_message():
     r = c.post("/api/control", json={"on": True})
     assert r.status_code == 409
     detail = r.json()["detail"]
-    assert "disarm" in detail.lower()          # names the required action
-    assert "replay" in detail.lower()          # names what is holding it
-
-
-def test_physical_replay_caps_speed():
-    c, _, session = _physical_client()
-    c.post("/api/replay/arm", json={"on": True})
-    for bad in (0, -1, 1.5, 99):
-        r = c.post("/api/replay/play", json={
-            "session_id": session["id"], "episode": 0, "speed": bad})
-        assert r.status_code == 400, f"speed {bad} should be rejected"
+    assert "disarm" in detail.lower()  # names the required action
+    assert "replay" in detail.lower()  # names what is holding it
 
 
 def test_physical_replay_seeks_start_then_streams_and_stops():
@@ -851,8 +962,7 @@ def test_physical_replay_seeks_start_then_streams_and_stops():
     # arm parked far away: the seek phase must hold, not stream
     b.latest_q = {n: 0.0 for n in [f"rev_motor_{i:02d}" for i in range(1, 9)]}
     c.post("/api/replay/arm", json={"on": True})
-    c.post("/api/replay/play", json={
-        "session_id": session["id"], "episode": 0, "speed": 1.0})
+    c.post("/api/replay/play", json={"session_id": session["id"], "episode": 0})
 
     time.sleep(0.4)
     assert b.published, "should be publishing the start pose while seeking"
@@ -863,8 +973,7 @@ def test_physical_replay_seeks_start_then_streams_and_stops():
     # arm "arrives": report the pose the player is asking for
     b.latest_q = dict(b.published[-1])
     deadline = time.monotonic() + 5.0
-    while (c.get("/api/replay/status").json()["phase"] == "seeking"
-           and time.monotonic() < deadline):
+    while c.get("/api/replay/status").json()["phase"] == "seeking" and time.monotonic() < deadline:
         time.sleep(0.05)
     assert c.get("/api/replay/status").json()["phase"] in ("playing", "done")
 
@@ -872,7 +981,7 @@ def test_physical_replay_seeks_start_then_streams_and_stops():
     assert r["phase"] == "idle"
     sent = len(b.published)
     time.sleep(0.3)
-    assert len(b.published) == sent      # publishing really stopped
+    assert len(b.published) == sent  # publishing really stopped
 
 
 if __name__ == "__main__":
@@ -913,6 +1022,5 @@ if __name__ == "__main__":
     test_physical_replay_needs_a_driver()
     test_physical_replay_is_exclusive_with_slider_control()
     test_control_refusal_carries_a_usable_message()
-    test_physical_replay_caps_speed()
     test_physical_replay_seeks_start_then_streams_and_stops()
     print("WEB API TESTS PASSED")

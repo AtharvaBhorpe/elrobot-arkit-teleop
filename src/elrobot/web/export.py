@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -15,14 +14,20 @@ from pathlib import Path
 
 import numpy as np
 
+from elrobot.episodes import (
+    dataset_signature,
+    episode_bounds,
+    recordable_features,
+)
+from elrobot.episodes import (
+    rgb_u8 as _rgb_u8,
+)
+from elrobot.episodes import (
+    source_tree_sha256 as _source_tree_sha256,
+)
 from elrobot.web.collection import CatalogError
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
-
-GENERATED_KEYS = {
-    "timestamp", "frame_index", "episode_index", "index", "task_index",
-}
-
 
 class ExportError(RuntimeError):
     def __init__(self, detail: str, code: int = 422):
@@ -33,31 +38,6 @@ class ExportError(RuntimeError):
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _rgb_u8(value):
-    arr = np.asarray(value)
-    if arr.ndim == 3 and arr.shape[0] in (1, 3):
-        arr = np.transpose(arr, (1, 2, 0))
-    if arr.dtype != np.uint8:
-        arr = (np.clip(arr, 0, 1) * 255).astype(np.uint8)
-    return np.ascontiguousarray(arr)
-
-
-def _scalar(value) -> int:
-    arr = np.asarray(value).reshape(-1)
-    return int(arr[0])
-
-
-def _source_tree_sha256(root: Path) -> str:
-    digest = hashlib.sha256()
-    for path in sorted(root.rglob("*")):
-        if not path.is_file():
-            continue
-        digest.update(str(path.relative_to(root)).encode())
-        digest.update(b"\0")
-        digest.update(hashlib.sha256(path.read_bytes()).digest())
-    return digest.hexdigest()
 
 
 class ExportBuilder:
@@ -83,42 +63,9 @@ class ExportBuilder:
                 return version, final, staging
             version += 1
 
-    @staticmethod
-    def _recordable_features(dataset) -> dict:
-        features = {}
-        for key, feature in dataset.features.items():
-            if key in GENERATED_KEYS:
-                continue
-            features[key] = {
-                field: deepcopy(feature[field])
-                for field in ("dtype", "shape", "names")
-                if field in feature
-            }
-        return features
-
-    @staticmethod
-    def _signature(dataset) -> tuple:
-        features = ExportBuilder._recordable_features(dataset)
-        normalized = tuple(sorted(
-            (
-                key,
-                value.get("dtype"),
-                tuple(value.get("shape", ())),
-                repr(value.get("names")),
-            )
-            for key, value in features.items()
-        ))
-        return int(dataset.fps), normalized
-
-    @staticmethod
-    def _bounds(dataset, source_index: int) -> tuple[int, int]:
-        for row in dataset.meta.episodes:
-            if _scalar(row["episode_index"]) == source_index:
-                return (
-                    _scalar(row["dataset_from_index"]),
-                    _scalar(row["dataset_to_index"]),
-                )
-        raise ExportError(f"raw dataset has no episode {source_index}")
+    _recordable_features = staticmethod(recordable_features)
+    _signature = staticmethod(dataset_signature)
+    _bounds = staticmethod(episode_bounds)
 
     def _prepare(self, name: str, task_ids) -> dict:
         from lerobot.datasets.lerobot_dataset import LeRobotDataset

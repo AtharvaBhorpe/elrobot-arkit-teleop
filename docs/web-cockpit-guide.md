@@ -279,12 +279,12 @@ the phone.
    control** is on, and `/api/control` refuses while replay is armed.
 2. **Arm** — a separate deliberate act. It refuses if no driver is running,
    since that is where every safety gate lives.
-3. Select the same curated or raw episode used by visual replay. The default
-   armed replay speed is **0.6×**, capped at 1.0.
+3. Select the same curated or raw episode used by visual replay. Physical
+   replay runs at the dataset's recorded 30 Hz rate.
 4. **Run on arm.** It first *seeks*: it holds the selected range's opening
    pose and lets the driver's slew limiter walk the arm there rather than
-   jumping into a trajectory. Once every joint is within 0.05 rad it streams
-   the episode. A 45 s seek timeout reports which joint remains off.
+   jumping into a trajectory. Once every arm joint is within 0.07 rad it streams
+   the episode. A 45 s seek timeout reports the remaining arm-position gap.
 5. **STOP** at any moment. Publishing ceases immediately and the driver's
    deadman freezes the arm within 200 ms.
 

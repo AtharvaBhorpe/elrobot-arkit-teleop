@@ -36,6 +36,11 @@ QT_SAFE_ENV = {"QT_IM_MODULE": "compose", "QT_IM_MODULES": "",
                "QT_QPA_PLATFORMTHEME": ""}  # no system gtk3 theme plugin
 
 
+def _env_args(mapping):
+    return [tok for env, flag in mapping
+            if (v := os.environ.get(env)) is not None for tok in (flag, v)]
+
+
 def current_pose_zeros():
     """Read the real arm pose -> {'zeros.<joint>': rad} for the slider GUI."""
     from lerobot.motors import Motor, MotorNormMode
@@ -80,8 +85,11 @@ def generate_launch_description():
              arguments=["-d", str(HERE.parent / "config" / "view.rviz")],
              additional_env=QT_SAFE_ENV,
              condition=IfCondition(LaunchConfiguration("rviz"))),
-        ExecuteProcess(cmd=[sys.executable, "-m", "elrobot.nodes.elrobot_driver",
-                            "--port", os.environ.get("PORT", "/dev/ttyACM0")],
+        ExecuteProcess(cmd=[sys.executable, "-m", "elrobot.nodes.elrobot_driver"]
+                       + _env_args([("PORT", "--port"),
+                                    ("MAX_VEL", "--max-vel"),
+                                    ("MAX_ACCEL", "--max-accel"),
+                                    ("ACCEL", "--accel")]),
                        output="screen"),
         Node(package="joint_state_publisher_gui",
              executable="joint_state_publisher_gui",

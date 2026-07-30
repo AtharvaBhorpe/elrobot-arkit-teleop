@@ -38,7 +38,11 @@ httpx2 = "*"
 # PyPI lerobot==0.1.0 is a stale placeholder with NO motors/feetech code.
 # The maintained bus (FeetechMotorsBus, sync_read/sync_write) lives only on git.
 # The `feetech` extra pulls feetech-servo-sdk itself.
-lerobot = { git = "https://github.com/huggingface/lerobot.git", extras = ["feetech", "dataset"] }
+lerobot = { git = "https://github.com/huggingface/lerobot.git", extras = [
+  "feetech",
+  "dataset",
+] }
+textual = ">=6.6,<7"
 # this repo itself, importable as `elrobot.*` everywhere (nodes, launches, tests)
 elrobot = { path = ".", editable = true }
 
@@ -48,7 +52,7 @@ elrobot = { path = ".", editable = true }
 # all four stacks import in one process (the M0/M2 prerequisite gate)
 prove-env = "python -m elrobot.tools.prove_env"
 # every offline suite: stub-bus driver safety, IK self-test, dataset, fake-phone pipeline, web API, calib steps
-test = "python tests/test_driver_safety.py && python -m elrobot.control.cartesian_ik && python tests/test_recorder.py && python tests/test_m2_pipeline.py && python tests/test_web_api.py && python tests/test_calib_steps.py && python tests/test_collection.py && python tests/test_export.py"
+test = "python tests/test_driver_safety.py && python -m elrobot.control.cartesian_ik && python tests/test_recorder.py && python tests/test_m2_pipeline.py && python tests/test_web_api.py && python tests/test_calib_steps.py && python tests/test_collection.py && python tests/test_export.py && python tests/test_episode_tui.py"
 lint = "ruff check src/ tests/ launch/"
 
 # ── drive the REAL arm ─────────────────────────────────────────────────
@@ -63,6 +67,8 @@ m3-arm6 = "python -m elrobot.tools.make_viz_urdf && FREEZE=rev_motor_03 ros2 lau
 # servo: position EXACT, wrist pitch/roll in position's null space, yaw follows
 # the arm (5 joints cannot yaw freely).
 m3-arm5 = "python -m elrobot.tools.make_viz_urdf && FREEZE=rev_motor_03,rev_motor_05 ros2 launch launch/m3.launch.py"
+# one terminal: phone teleop + driver + cameras + web cockpit (rviz off by default)
+cockpit = "python -m elrobot.tools.make_viz_urdf && ros2 launch launch/cockpit.launch.py"
 # slider GUI drives the arm; sliders seed from the arm's current pose
 jog = "python -m elrobot.tools.make_viz_urdf && ros2 launch launch/jog.launch.py"
 # live tick/angle/load monitor; also RELEASES TORQUE (arm goes limp — support it)
@@ -96,5 +102,7 @@ campick = "python -m elrobot.tools.cam_picker"
 rqt-cam = "env QT_IM_MODULE=compose QT_IM_MODULES= QT_QPA_PLATFORMTHEME= ros2 run rqt_image_view rqt_image_view"
 # episode recorder -> LeRobotDataset (own terminal; ENTER starts/stops)
 record = "python -m elrobot.nodes.episode_recorder"
+# standalone TUI: record, manage, guarded physical replay, cleaned export
+replay = "python -m elrobot.tools.episode_tui"
 # everything -> mcap rosbag under data/bags/ (Ctrl-C to stop)
-bag = "ros2 bag record -s mcap -o data/bags/$(date +%Y%m%d_%H%M%S) /joint_states /joint_command /target_pose /gripper_command /wrist_cam/image /ext_cam/image /tf /tf_static"
+bag = "ros2 bag record -s mcap -o data/bags/$(date +%Y%m%d_%H%M%S) /joint_states /joint_goal /joint_command /target_pose /gripper_command /wrist_cam/image /ext_cam/image /tf /tf_static"

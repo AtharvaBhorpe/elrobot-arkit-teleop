@@ -14,7 +14,7 @@ application for the complete local episode workflow:
 4. replay a selected episode on the real arm through the existing ROS driver;
 5. create an immutable cleaned LeRobot v3 export.
 
-The command is `pixi run replay`. It is a mode-focused `curses` TUI and does
+The command is `pixi run replay`. It is a mode-focused Textual TUI and does
 not depend on FastAPI, the cockpit server, the collection catalog, or browser
 assets. `pixi run record` remains available for simple legacy capture.
 
@@ -78,7 +78,7 @@ entry therefore means "keep with original task."
 ### Replay
 
 The Replay screen shows the selected episode, task, frame count, duration,
-speed, driver state, and one unambiguous state label: `DISARMED`, `ARMED`,
+driver state, and one unambiguous state label: `DISARMED`, `ARMED`,
 `SEEKING`, or `PLAYING`.
 
 1. The operator types the exact word `arm`.
@@ -88,7 +88,7 @@ speed, driver state, and one unambiguous state label: `DISARMED`, `ARMED`,
    stream.
 4. `Space` or `Esc` stops at any time.
 
-Default speed is 0.6×. A numeric speed prompt accepts values in `(0, 1]`.
+Replay runs at the dataset's recorded 30 Hz rate.
 Changing dataset, episode, or mode stops and disarms before changing context.
 An excluded episode remains replayable because exclusion affects cleaned
 exports, not the immutable raw recording.
@@ -231,11 +231,12 @@ or removes the source.
 
 ### TUI controller
 
-The `curses` layer renders state and forwards user intent to the recorder,
+The Textual layer renders state and forwards user intent to the recorder,
 metadata, exporter, and replay core. The transition logic is kept independent
 of rendering so it can be unit-tested without an interactive terminal.
 
-No new UI dependency is added.
+Textual supplies the data table, key bindings, modal input, responsive layout,
+and headless UI test harness.
 
 ## Data and control flow
 
@@ -299,7 +300,7 @@ All automated checks are offline-safe.
    - exact `arm` confirmation;
    - IK `replay`/`resume` pause behavior;
    - rejection of any other command publisher;
-   - start-pose seek, 1× speed cap, stop, driver loss, and stale state;
+   - start-pose seek, fixed-rate playback, stop, driver loss, and stale state;
    - automatic stop/disarm on context changes.
 4. **Export round trip**
    - kept-only episodes;
@@ -316,7 +317,7 @@ All automated checks are offline-safe.
 
 The full `pixi run test` suite remains the final offline gate. Real-hardware
 validation uses a short expendable recording in a clear workspace, visual
-inspection of its metadata, a guarded 0.6× replay with STOP exercised, and a
+inspection of its metadata, a guarded replay with STOP exercised, and a
 reload of the cleaned export.
 
 ## Deliberate omissions

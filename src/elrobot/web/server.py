@@ -44,6 +44,7 @@ from elrobot.web.export import ExportError, ExportService
 from elrobot.web.replay import PhysicalReplay, ReplayError
 
 JOINTS = ARM_JOINTS + [GRIPPER_JOINT]
+PHONE_MODES = {"7dof", "6dof", "5dof"}
 STALE_S = 1.0
 # episode_recorder publishes /record/status at 1 Hz; 3 s means a couple of
 # missed ticks before we call it dead rather than flapping on one hiccup.
@@ -53,17 +54,17 @@ RECORD_STALE_S = 3.0
 # Same PORT env knob every other task honours - this arm has already moved
 # from ttyACM0 to ttyACM1 once after a replug.
 DEFAULT_PORT = os.environ.get("PORT", "/dev/ttyACM0")
-DEFAULT_COLLECTION_ROOT = os.environ.get(
-    "COLLECTION_ROOT", "data/collections")
+DEFAULT_COLLECTION_ROOT = os.environ.get("COLLECTION_ROOT", "data/collections")
 
-ROOT = Path(__file__).resolve().parents[3]      # repo root
+ROOT = Path(__file__).resolve().parents[3]  # repo root
 STATIC = Path(__file__).resolve().parent / "static"
 
 
 def _placeholder(label: str) -> bytes:
     img = np.zeros((360, 640, 3), dtype=np.uint8) + 18
-    cv2.putText(img, f"no signal - {label}", (40, 190),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (120, 120, 120), 1)
+    cv2.putText(
+        img, f"no signal - {label}", (40, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (120, 120, 120), 1
+    )
     return cv2.imencode(".jpg", img)[1].tobytes()
 
 
@@ -73,6 +74,7 @@ class WebBridge:
     def __init__(self):
         import rclpy
         from rclpy.node import Node
+        from rclpy.qos import DurabilityPolicy, QoSProfile
         from sensor_msgs.msg import Image, JointState
 
         rclpy.init()
@@ -87,24 +89,23 @@ class WebBridge:
         self.latest_q: dict[str, float] = {}
         self.latest_stamp = 0.0
         self.control_on = False
+        self.teleop_mode = "7dof"
         self.latest_jpeg: dict[str, tuple[bytes, float]] = {}
         self.record_status: dict | None = None
         self.record_stamp = 0.0
-        self.node.create_subscription(
-            JointState, "/joint_states", self._on_js, 1)
-        for name, topic in (("wrist", "/wrist_cam/image"),
-                            ("ext", "/ext_cam/image")):
-            self.node.create_subscription(
-                Image, topic,
-                lambda m, n=name: self._on_img(m, n), 1)
+        self.node.create_subscription(JointState, "/joint_states", self._on_js, 1)
+        for name, topic in (("wrist", "/wrist_cam/image"), ("ext", "/ext_cam/image")):
+            self.node.create_subscription(Image, topic, lambda m, n=name: self._on_img(m, n), 1)
         self.node.create_subscription(String, "/record/status", self._on_record, 1)
         self._pub = self.node.create_publisher(JointState, "/joint_command", 1)
+        mode_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self._mode_pub = self.node.create_publisher(String, "/teleop_mode", mode_qos)
+        self._String = String
         from rclpy.executors import MultiThreadedExecutor
 
         self._executor = MultiThreadedExecutor(num_threads=2)
         self._executor.add_node(self.node)
-        self._spin = threading.Thread(
-            target=self._executor.spin, daemon=True)
+        self._spin = threading.Thread(target=self._executor.spin, daemon=True)
         self._spin.start()
 
     def _on_js(self, msg):
@@ -113,6 +114,7 @@ class WebBridge:
 
     def _on_record(self, msg):
         import json
+
         self.record_status = json.loads(msg.data)
         self.record_stamp = time.monotonic()
 
@@ -129,10 +131,8 @@ class WebBridge:
         return self.record_status
 
     def _on_img(self, msg, name):
-        frame = np.frombuffer(msg.data, dtype=np.uint8).reshape(
-            msg.height, msg.width, 3)
-        ok, jpg = cv2.imencode(".jpg", frame,
-                               [cv2.IMWRITE_JPEG_QUALITY, 80])
+        frame = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, 3)
+        ok, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
         if ok:
             self.latest_jpeg[name] = (jpg.tobytes(), time.monotonic())
 
@@ -143,9 +143,15 @@ class WebBridge:
 
     def publish_command(self, positions: dict):
         msg = self._JointState()
+        msg.header.stamp = self.node.get_clock().now().to_msg()
         msg.name = list(positions)
         msg.position = [float(v) for v in positions.values()]
         self._pub.publish(msg)
+
+    def publish_mode(self, mode: str):
+        msg = self._String()
+        msg.data = mode
+        self._mode_pub.publish(msg)
 
     def driver_alive(self) -> bool:
         return len(self.node.get_publishers_info_by_topic("/joint_states")) > 0
@@ -159,27 +165,28 @@ class WebBridge:
     def external_recorder_alive(self):
         return any(
             info.node_name == "episode_recorder"
-            for info in self.node.get_publishers_info_by_topic(
-                "/record/status")
+            for info in self.node.get_publishers_info_by_topic("/record/status")
         )
 
 
-def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
-               backup_root=backup.DEFAULT_ROOT,
-               collection_root=DEFAULT_COLLECTION_ROOT,
-               recorder_factory=None,
-               dataset_validator=None,
-               export_service=None) -> FastAPI:
-    calib = CalibSession(bus_factory=bus_factory, port=port,
-                         backup_root=backup_root)
+def create_app(
+    bridge,
+    bus_factory=None,
+    port=DEFAULT_PORT,
+    backup_root=backup.DEFAULT_ROOT,
+    collection_root=DEFAULT_COLLECTION_ROOT,
+    recorder_factory=None,
+    dataset_validator=None,
+    export_service=None,
+) -> FastAPI:
+    calib = CalibSession(bus_factory=bus_factory, port=port, backup_root=backup_root)
     catalog = CollectionCatalog(collection_root)
     library = CuratedReplayLibrary(catalog)
     player = PhysicalReplay(
         library,
         publish=bridge.publish_command,
         current_pose=lambda: bridge.latest_q,
-        driver_alive=lambda: (bridge.driver_alive()
-                              if hasattr(bridge, "driver_alive") else False),
+        driver_alive=lambda: bridge.driver_alive() if hasattr(bridge, "driver_alive") else False,
     )
     if recorder_factory is None:
         from elrobot.nodes.episode_recorder import Recorder
@@ -190,8 +197,7 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
         recorder_factory,
         add_node=getattr(bridge, "add_node", lambda node: None),
         remove_node=getattr(bridge, "remove_node", lambda node: None),
-        external_recorder_alive=getattr(
-            bridge, "external_recorder_alive", lambda: False),
+        external_recorder_alive=getattr(bridge, "external_recorder_alive", lambda: False),
         dataset_validator=dataset_validator,
     )
     exports = export_service or ExportService(catalog)
@@ -221,6 +227,16 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
             and bridge.driver_alive()
             and time.monotonic() - bridge.latest_stamp < STALE_S
         )
+
+    def set_teleop_mode(mode: str):
+        if mode not in PHONE_MODES:
+            raise HTTPException(400, "mode must be 7dof, 6dof, or 5dof")
+        if player.armed:
+            raise HTTPException(409, "disarm replay before changing teleop mode")
+        bridge.teleop_mode = mode
+        if not bridge.control_on and hasattr(bridge, "publish_mode"):
+            bridge.publish_mode(mode)
+        return {"mode": mode}
 
     @app.post("/api/calib/start")
     def calib_start():
@@ -256,7 +272,7 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
         return calib.sign(body["joint"], bool(body.get("flip")))
 
     @app.post("/api/calib/finish")
-    def calib_finish(body: dict = None):
+    def calib_finish(body: dict | None = None):
         # `out` override exists ONLY so offline tests never touch the real,
         # hand-measured calibration/urdf_ticks.json - the wizard UI never
         # sends it, so real use always writes the real path.
@@ -270,13 +286,20 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
         # /joint_command with no arbitration is the exact fight the cockpit
         # already warns about, and here both would be automatic.
         if want and player.armed:
-            raise HTTPException(
-                409, "disarm replay first - it is holding /joint_command")
+            raise HTTPException(409, "disarm replay first - it is holding /joint_command")
         if want and not driver_ready():
             raise HTTPException(409, "wait for a fresh driver state first")
         bridge.control_on = want
-        return {"control_on": bridge.control_on,
-                "seed": dict(bridge.latest_q) if bridge.control_on else {}}
+        if hasattr(bridge, "publish_mode"):
+            bridge.publish_mode("web" if want else bridge.teleop_mode)
+        return {
+            "control_on": bridge.control_on,
+            "seed": dict(bridge.latest_q) if bridge.control_on else {},
+        }
+
+    @app.post("/api/mode")
+    def mode(body: dict):
+        return set_teleop_mode(str(body.get("mode", "")))
 
     # ---- managed collection -------------------------------------------
 
@@ -286,16 +309,11 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
 
     @app.post("/api/tasks")
     def task_create(body: dict):
-        return catalog.create_task(
-            body.get("name", ""), body.get("instruction", ""))
+        return catalog.create_task(body.get("name", ""), body.get("instruction", ""))
 
     @app.patch("/api/tasks/{task_id}")
     def task_update(task_id: str, body: dict):
-        fields = {
-            key: body[key]
-            for key in ("name", "instruction", "archived")
-            if key in body
-        }
+        fields = {key: body[key] for key in ("name", "instruction", "archived") if key in body}
         return catalog.update_task(task_id, **fields)
 
     @app.get("/api/collection")
@@ -304,8 +322,7 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
 
     @app.post("/api/collection/session/start")
     def collection_session_start(body: dict):
-        return manager.start_session(
-            body.get("task_id", ""), body.get("name", ""))
+        return manager.start_session(body.get("task_id", ""), body.get("name", ""))
 
     @app.post("/api/collection/episode/start")
     def collection_episode_start(body: dict):
@@ -321,6 +338,11 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
 
     @app.post("/api/collection/session/finish")
     def collection_session_finish():
+        if manager.snapshot()["state"] == "recording":
+            try:
+                manager.stop_episode()
+            except CollectionError:
+                pass
         return manager.finish_session()
 
     @app.get("/api/collection/recovery")
@@ -374,7 +396,9 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
 
     @app.patch("/api/curation/episodes/{session_id}/{source_index}")
     def curation_update(
-        session_id: str, source_index: int, body: dict,
+        session_id: str,
+        source_index: int,
+        body: dict,
     ):
         # Curation changes which frames replay means. Stop and explicitly
         # disarm before changing that meaning so no autonomous publisher can
@@ -385,11 +409,12 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
 
     @app.get("/api/curation/episodes/{session_id}/{source_index}/states")
     def curation_states(
-        session_id: str, source_index: int, raw: bool = False,
+        session_id: str,
+        source_index: int,
+        raw: bool = False,
     ):
         try:
-            return library.states(
-                EpisodeRef(session_id, source_index, raw))
+            return library.states(EpisodeRef(session_id, source_index, raw))
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from exc
 
@@ -397,14 +422,16 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
         "/api/curation/episodes/{session_id}/{source_index}/frame/{n}",
     )
     def curation_frame(
-        session_id: str, source_index: int, n: int,
-        cam: str = "wrist", raw: bool = False,
+        session_id: str,
+        source_index: int,
+        n: int,
+        cam: str = "wrist",
+        raw: bool = False,
     ):
         if cam not in ("wrist", "ext"):
             raise HTTPException(404, "cam must be wrist or ext")
         try:
-            jpeg = library.frame_jpeg(
-                EpisodeRef(session_id, source_index, raw), n, cam)
+            jpeg = library.frame_jpeg(EpisodeRef(session_id, source_index, raw), n, cam)
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from exc
         return Response(
@@ -422,9 +449,18 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
     def replay_status():
         return player.status()
 
+    def set_replay_arm(on: bool):
+        status = player.arm(on, bridge.control_on)
+        if hasattr(bridge, "publish_mode"):
+            # IK publishes its hold pose at 100 Hz even when the phone clutch
+            # is released. Pause it for autonomous replay, just as Web
+            # Control does, or it overwrites replay's 30 Hz commands.
+            bridge.publish_mode("web" if status["armed"] else bridge.teleop_mode)
+        return status
+
     @app.post("/api/replay/arm")
     def replay_arm(body: dict):
-        return player.arm(bool(body.get("on")), bridge.control_on)
+        return set_replay_arm(bool(body.get("on")))
 
     @app.post("/api/replay/play")
     def replay_play(body: dict):
@@ -434,8 +470,7 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
                 int(body.get("episode", -1)),
                 bool(body.get("raw", False)),
             )
-            return player.play(
-                selection, float(body.get("speed", 0.6)))
+            return player.play(selection)
         except (KeyError, ValueError) as e:
             raise HTTPException(404, str(e)) from e
 
@@ -473,7 +508,7 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
         # tab found the server already "in control".
         if not clients:
             bridge.control_on = False
-            player.arm(False, False)
+            set_replay_arm(False)
 
     app.state.clients = clients
     app.state.client_joined = client_joined
@@ -487,21 +522,24 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
 
         async def sender():
             while True:
-                alive = (bridge.driver_alive()
-                         if hasattr(bridge, "driver_alive") else False)
-                await sock.send_json({
-                    "type": "state", "joints": bridge.latest_q,
-                    "age_s": time.monotonic() - bridge.latest_stamp,
-                    "control_on": bridge.control_on,
-                    "commanders": bridge.commanders(),
-                    "driver_alive": alive,
-                    "record": bridge.record_status_fresh(),
-                    "collection": manager.snapshot(),
-                    "replay": player.status(),
-                    # per-connection: is THIS tab the one allowed to command?
-                    "is_owner": bool(clients) and clients[0] is sock,
-                    "clients": len(clients),
-                })
+                alive = bridge.driver_alive() if hasattr(bridge, "driver_alive") else False
+                await sock.send_json(
+                    {
+                        "type": "state",
+                        "joints": bridge.latest_q,
+                        "age_s": time.monotonic() - bridge.latest_stamp,
+                        "control_on": bridge.control_on,
+                        "mode": getattr(bridge, "teleop_mode", "7dof"),
+                        "commanders": bridge.commanders(),
+                        "driver_alive": alive,
+                        "record": bridge.record_status_fresh(),
+                        "collection": manager.snapshot(),
+                        "replay": player.status(),
+                        # per-connection: is THIS tab the one allowed to command?
+                        "is_owner": bool(clients) and clients[0] is sock,
+                        "clients": len(clients),
+                    }
+                )
                 await asyncio.sleep(1 / 30)
 
         send_task = asyncio.create_task(sender())
@@ -532,8 +570,11 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
         # updated). fetch() + Blob + createObjectURL works everywhere.
         if name not in ("wrist", "ext"):
             raise HTTPException(404)
-        return Response(content=_current_jpeg(name), media_type="image/jpeg",
-                        headers={"Cache-Control": "no-store"})
+        return Response(
+            content=_current_jpeg(name),
+            media_type="image/jpeg",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/cam/{name}")
     def cam(name: str):
@@ -549,12 +590,12 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
             # generator's asyncio.sleep, closes cleanly on early client
             # disconnect instead of leaking a live task in the event loop
             while True:
-                yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
-                       + _current_jpeg(name) + b"\r\n")
+                yield (
+                    b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + _current_jpeg(name) + b"\r\n"
+                )
                 time.sleep(1 / 15)
 
-        return StreamingResponse(
-            gen(), media_type="multipart/x-mixed-replace; boundary=frame")
+        return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 
     # no-store on the static assets too, not just / and /urdf. A browser
     # holding a cached app.js against freshly-served HTML silently gives you
@@ -594,12 +635,11 @@ def create_app(bridge, bus_factory=None, port=DEFAULT_PORT,
         # silently failing every mesh fetch (confirmed: robot never
         # rendered, only the grid, despite /urdf itself returning 200).
         # A relative "meshes/x.dae" concatenates to the correct "/meshes/x.dae".
-        return re.sub(r'filename="[^"]*/([^/"]+\.dae)"',
-                      r'filename="meshes/\1"', text)
+        return re.sub(r'filename="[^"]*/([^/"]+\.dae)"', r'filename="meshes/\1"', text)
 
     @app.get("/meshes/{name}")
     def mesh(name: str):
-        f = ROOT / "data" / "viz_meshes" / Path(name).name   # no traversal
+        f = ROOT / "data" / "viz_meshes" / Path(name).name  # no traversal
         if not f.exists():
             raise HTTPException(404)
         return FileResponse(f)

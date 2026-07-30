@@ -25,6 +25,8 @@ import numpy as np
 import pinocchio as pin
 import rclpy
 from geometry_msgs.msg import PoseStamped
+from rclpy._rclpy_pybind11 import RCLError
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64
@@ -47,11 +49,13 @@ from elrobot.control.cartesian_ik import (  # noqa: E402
 # robot and the gripper rolls the same way, clockwise-for-clockwise as seen
 # from the base. (The Franka project's map had the operator 90 deg around --
 # phone-right came out as robot-backward here.)
-ARKIT_TO_ROS = np.array([
-    [1.0, 0.0, 0.0],
-    [0.0, 0.0, -1.0],
-    [0.0, 1.0, 0.0],
-])
+ARKIT_TO_ROS = np.array(
+    [
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, -1.0],
+        [0.0, 1.0, 0.0],
+    ]
+)
 
 DEADMAN_S = 0.2  # tolerates 1 dropped packet at ZIG SIM's 10 Hz, fires on the 2nd
 
@@ -66,8 +70,7 @@ class ARKitReceiver(Node):
 
         # FK only (reuses the IK class for model + ee_pose)
         self.fk = CartesianServoIK()
-        self.qidx = {n: self.fk.model.joints[self.fk.model.getJointId(n)].idx_q
-                     for n in ARM_JOINTS}
+        self.qidx = {n: self.fk.model.joints[self.fk.model.getJointId(n)].idx_q for n in ARM_JOINTS}
         self._latest_q = None
         self.robot_ref = None
         self.phone_ref = None
@@ -76,6 +79,7 @@ class ARKitReceiver(Node):
         self.gripper_closed = False
         self.prev_n = 0
         self._last_rx = None
+        self._last_rot_log = 0.0
 
         self.create_subscription(JointState, "/joint_states", self._on_joint_states, 1)
         self.pose_pub = self.create_publisher(PoseStamped, "/target_pose", 1)
@@ -88,7 +92,8 @@ class ARKitReceiver(Node):
         self.create_timer(2.0, self._log_rx)
         self.get_logger().info(
             f"arkit_receiver up: UDP :{self.port}  scale={self.scale}\n"
-            "   1 finger = move, 0 = freeze, 2-finger tap = toggle gripper")
+            "   1 finger = move, 0 = freeze, 2-finger tap = toggle gripper"
+        )
 
     def _on_joint_states(self, msg: JointState):
         q = self.fk.q.copy()
@@ -98,8 +103,11 @@ class ARKitReceiver(Node):
         self._latest_q = q
 
     def _check_deadman(self):
-        if (self.moving and self._last_rx is not None
-                and time.monotonic() - self._last_rx > DEADMAN_S):
+        if (
+            self.moving
+            and self._last_rx is not None
+            and time.monotonic() - self._last_rx > DEADMAN_S
+        ):
             self.moving = False
             self._publish_stop()
             self.get_logger().warning("stream deadman: clutch released")
@@ -120,38 +128,37 @@ class ARKitReceiver(Node):
         msg = PoseStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = "base_link"
-        msg.pose.position.x, msg.pose.position.y, msg.pose.position.z = \
-            map(float, M.translation)
+        msg.pose.position.x, msg.pose.position.y, msg.pose.position.z = map(float, M.translation)
         msg.pose.orientation.w = float(quat.w)
         msg.pose.orientation.x = float(quat.x)
         msg.pose.orientation.y = float(quat.y)
         msg.pose.orientation.z = float(quat.z)
         self.pose_pub.publish(msg)
 
-    def _log_rot_axis(self, d_robot, _state=[0.0]):
+    def _log_rot_axis(self, d_robot):
         """1 Hz: dominant rotation axis in the base frame, for axis debugging.
         X=right, Y=arm-forward (roll axis), Z=up (yaw axis)."""
         now = time.monotonic()
-        if now - _state[0] < 1.0:
+        if now - self._last_rot_log < 1.0:
             return
         aa = pin.AngleAxis(d_robot)
         deg = np.degrees(aa.angle)
         if deg < 15.0:
             return
-        _state[0] = now
+        self._last_rot_log = now
         ax = aa.axis
         dom = "XYZ"[int(np.argmax(np.abs(ax)))]
         self.get_logger().info(
             f"phone rotation: {deg:.0f} deg about "
-            f"[{ax[0]:+.2f} {ax[1]:+.2f} {ax[2]:+.2f}] (mostly {dom})")
+            f"[{ax[0]:+.2f} {ax[1]:+.2f} {ax[2]:+.2f}] (mostly {dom})"
+        )
 
     def _quat_to_R(self, q):
         if self.quat_order == "xyzw":
             x, y, z, w = q
         else:
             w, x, y, z = q
-        return pin.Quaternion(float(w), float(x), float(y), float(z)) \
-            .normalized().matrix()
+        return pin.Quaternion(float(w), float(x), float(y), float(z)).normalized().matrix()
 
     def _udp_serve(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -186,27 +193,29 @@ class ARKitReceiver(Node):
         self._rx_handled += 1
         self._last_rx = time.monotonic()
         touch = sensors.get("touch") or []
-        n = len(touch) if isinstance(touch, list) else int(touch)
+        try:
+            n = len(touch) if isinstance(touch, list) else int(touch)
+        except (TypeError, ValueError):
+            return
         self._process(pos, rot, n)
 
     def _log_rx(self):
         if self._rx_arrived or self._rx_handled:
             self.get_logger().info(
-                f"rx: {self._rx_arrived/2:.0f}/s arrived, "
-                f"{self._rx_handled/2:.0f}/s handled (latest-only)")
+                f"rx: {self._rx_arrived / 2:.0f}/s arrived, "
+                f"{self._rx_handled / 2:.0f}/s handled (latest-only)"
+            )
         self._rx_arrived = self._rx_handled = 0
 
     def _process(self, pos: np.ndarray, rot, n: int):
         # Gripper: toggle on rising edge into >=2 fingers; latched.
         if n >= 2 and self.prev_n < 2:
             self.gripper_closed = not self.gripper_closed
-            self.get_logger().info(
-                f"gripper -> {'CLOSED' if self.gripper_closed else 'OPEN'}")
-        self.grip_pub.publish(Float64(
-            data=GRIPPER_CLOSED if self.gripper_closed else GRIPPER_OPEN))
+            self.get_logger().info(f"gripper -> {'CLOSED' if self.gripper_closed else 'OPEN'}")
+        self.grip_pub.publish(Float64(data=GRIPPER_CLOSED if self.gripper_closed else GRIPPER_OPEN))
 
         # Clutch: exactly 1 finger = moving; re-zero both refs on engage.
-        moving = (n == 1)
+        moving = n == 1
         if moving and not self.moving:
             if self._latest_q is not None:
                 self.fk.set_q(self._latest_q)
@@ -220,18 +229,26 @@ class ARKitReceiver(Node):
             self._publish_stop()
             self.get_logger().info("move released (stop-here target sent)")
 
-        if self.moving and self.robot_ref is not None:
-            delta = self.C @ (pos - self.phone_ref) * self.scale
-            target_pos = self.robot_ref.translation + delta
+        robot_ref = self.robot_ref
+        phone_ref = self.phone_ref
+        phone_rot_ref = self.phone_rot_ref
+        if (
+            self.moving
+            and robot_ref is not None
+            and phone_ref is not None
+            and phone_rot_ref is not None
+        ):
+            delta = self.C @ (pos - phone_ref) * self.scale
+            target_pos = robot_ref.translation + delta
 
             if self.orient:
                 # dR_robot = C (R_now R_ref^T) C^T, applied to the engage pose.
-                d_arkit = self._quat_to_R(rot) @ self.phone_rot_ref.T
+                d_arkit = self._quat_to_R(rot) @ phone_rot_ref.T
                 d_robot = self.C @ d_arkit @ self.C.T
-                target_R = d_robot @ self.robot_ref.rotation
+                target_R = d_robot @ robot_ref.rotation
                 self._log_rot_axis(d_robot)
             else:
-                target_R = self.robot_ref.rotation
+                target_R = robot_ref.rotation
             self._publish_pose(pin.SE3(target_R, target_pos))
 
         self.prev_n = n
@@ -241,10 +258,18 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", type=int, default=50000)
-    p.add_argument("--scale", type=float, default=0.4,
-                   help="phone->TCP translation gain (spec default, tune in M4)")
-    p.add_argument("--no-orient", dest="orient", action="store_false",
-                   help="position-only (TCP keeps engage orientation)")
+    p.add_argument(
+        "--scale",
+        type=float,
+        default=0.4,
+        help="phone->TCP translation gain (spec default, tune in M4)",
+    )
+    p.add_argument(
+        "--no-orient",
+        dest="orient",
+        action="store_false",
+        help="position-only (TCP keeps engage orientation)",
+    )
     p.set_defaults(orient=True)
     p.add_argument("--quat-order", choices=["xyzw", "wxyz"], default="xyzw")
     args, _ = p.parse_known_args()
@@ -253,7 +278,7 @@ def main():
     node = ARKitReceiver(args)
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException, RCLError):
         pass
     finally:
         node.destroy_node()
