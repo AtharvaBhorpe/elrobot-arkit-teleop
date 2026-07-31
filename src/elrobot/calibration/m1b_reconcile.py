@@ -27,11 +27,10 @@ from pathlib import Path
 
 import numpy as np
 import pinocchio as pin
+from lerobot.motors import Motor, MotorNormMode
+from lerobot.motors.feetech import FeetechMotorsBus
 
-from elrobot.calibration import steps
-from elrobot.calibration.steps import derive_table
-from elrobot.calibration.steps import unwrap as _unwrap  # re-exported below
-
+MODEL = "sts3215"
 TICKS_PER_RAD = 651.9
 ENC = 4096
 ARM = [f"rev_motor_{i:02d}" for i in range(1, 8)]
@@ -44,11 +43,24 @@ PROBE = 0.3  # rad, for deriving the "which way does it move" description
 TRANSLATE_MIN = 0.005  # m; below this the joint is a roll -> describe the spin
 
 
+def build_bus(port):
+    motors = {n: Motor(i, MODEL, MotorNormMode.RANGE_M100_100)
+              for i, n in enumerate(ARM + ["rev_motor_08"], start=1)}
+    return FeetechMotorsBus(port=port, motors=motors, calibration=None)
+
+
 def read(bus, name):
     return bus.sync_read("Present_Position", [name], normalize=False)[name]
 
 
-unwrap = _unwrap  # steps.unwrap - identical logic, extracted for the web wizard
+def unwrap(prev_raw, raw, acc):
+    """Track absolute travel across the 0/4095 encoder boundary."""
+    d = raw - prev_raw
+    if d > ENC // 2:
+        d -= ENC
+    elif d < -ENC // 2:
+        d += ENC
+    return acc + d
 
 
 def joint_axes(path="docs/urdf_Elrobot.urdf"):
@@ -164,13 +176,15 @@ def main():
     model = pin.buildModelFromUrdf("docs/urdf_Elrobot.urdf")
     data = model.createData()
     jid = {model.names[j]: j for j in range(1, model.njoints)}
-    limits = steps.read_urdf_limits(ARM)
+    limits = {n: (model.lowerPositionLimit[model.joints[jid[n]].idx_q],
+                  model.upperPositionLimit[model.joints[jid[n]].idx_q])
+              for n in ARM}
     calib = json.loads(Path(args.calib).read_text())
 
     print(__doc__)
     input("Arm resting low / supported? Torque will be disabled. ENTER...")
 
-    bus = steps.build_bus(args.port)
+    bus = build_bus(args.port)
     bus.connect(handshake=True)
     try:
         bus.disable_torque()
@@ -191,21 +205,21 @@ def main():
             direction, mag = describe(model, data, jid[n], axes)
             signs[n] = ask_sign(bus, n, direction, mag * 1000)
 
-        # Derive offsets (steps.derive_table has the actual math; this loop
-        # is only the CLI's live table printing)
-        norm_ranges = {n: (min(ranges[n]), max(ranges[n])) for n in ARM}
-        table = derive_table(
-            norm_ranges, signs,
-            gripper={"closed_ticks": calib["rev_motor_08"]["range_min"],
-                    "open_ticks": calib["rev_motor_08"]["range_max"]},
-            limits=limits)
+        # Derive offsets
+        table = {}
         print(f"\n{'JOINT':<14}{'SPAN':>6}{'EXPECT':>8}{'SIGN':>6}{'OFFSET':>10}")
         for n in ARM:
-            lo_t, hi_t = norm_ranges[n]
+            lo_t, hi_t = min(ranges[n]), max(ranges[n])
             q_lo, q_hi = limits[n]
             span, expect = hi_t - lo_t, (q_hi - q_lo) * TICKS_PER_RAD
-            print(f"{n:<14}{span:>6}{expect:>8.0f}{signs[n]:>+6d}"
-                  f"{table[n]['offset']:>10.1f}")
+            offset = (lo_t + hi_t) / 2 - signs[n] * TICKS_PER_RAD * (q_lo + q_hi) / 2
+            table[n] = {"offset": round(offset, 1), "sign": signs[n]}
+            print(f"{n:<14}{span:>6}{expect:>8.0f}{signs[n]:>+6d}{offset:>10.1f}")
+
+        table["rev_motor_08"] = {  # gripper: no URDF correspondence
+            "closed_ticks": calib["rev_motor_08"]["range_min"],
+            "open_ticks": calib["rev_motor_08"]["range_max"],
+        }
 
         # Phase C - verification gate: FK against a physical measurement
         print("\n=== verification gate ===")

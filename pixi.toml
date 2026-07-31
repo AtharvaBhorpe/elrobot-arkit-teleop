@@ -14,6 +14,7 @@ ros-jazzy-ros-base = "*"
 ros-jazzy-rviz2 = "*"
 ros-jazzy-robot-state-publisher = "*"
 ros-jazzy-joint-state-publisher-gui = "*"
+ros-jazzy-xacro = "*"
 # mcap recording for ros2 bag
 ros-jazzy-rosbag2-storage-mcap = "*"
 # camera feed viewer (sturdier than rviz Image display for quick checks)
@@ -23,18 +24,14 @@ ros-jazzy-foxglove-bridge = "*"
 # Kinematics-only Pinocchio for the IK layer (spec: nq=10, meshes not required)
 pinocchio = "*"
 # build/dev basics
+pip = "*"
 ruff = "*"
-# web cockpit backend
-fastapi = "*"
-uvicorn = "*"
 # lerobot pins these tighter than conda's defaults — pin conda into the overlap
 setuptools = ">=71,<81"
 packaging = ">=24.2,<26"
 numpy = ">=2.0,<2.3"
 
 [pypi-dependencies]
-# Starlette 1.x TestClient runs on the maintained HTTPX2 transport.
-httpx2 = "*"
 # PyPI lerobot==0.1.0 is a stale placeholder with NO motors/feetech code.
 # The maintained bus (FeetechMotorsBus, sync_read/sync_write) lives only on git.
 # The `feetech` extra pulls feetech-servo-sdk itself.
@@ -47,8 +44,8 @@ elrobot = { path = ".", editable = true }
 [tasks]
 # all four stacks import in one process (the M0/M2 prerequisite gate)
 prove-env = "python -m elrobot.tools.prove_env"
-# every offline suite: stub-bus driver safety, IK self-test, dataset, fake-phone pipeline, web API, calib steps
-test = "python tests/test_driver_safety.py && python -m elrobot.control.cartesian_ik && python tests/test_recorder.py && python tests/test_m2_pipeline.py && python tests/test_web_api.py && python tests/test_calib_steps.py && python tests/test_collection.py && python tests/test_export.py"
+# every offline suite: stub-bus driver safety, IK self-test, dataset, fake-phone pipeline
+test = "python tests/test_driver_safety.py && python -m elrobot.control.cartesian_ik && python tests/test_recorder.py && python tests/test_m2_pipeline.py"
 lint = "ruff check src/ tests/ launch/"
 
 # ── drive the REAL arm ─────────────────────────────────────────────────
@@ -67,18 +64,9 @@ m3-arm5 = "python -m elrobot.tools.make_viz_urdf && FREEZE=rev_motor_03,rev_moto
 jog = "python -m elrobot.tools.make_viz_urdf && ros2 launch launch/jog.launch.py"
 # live tick/angle/load monitor; also RELEASES TORQUE (arm goes limp — support it)
 ticks = "python -m elrobot.tools.watch_ticks"
-# snapshot / put back the servo EEPROM a recalibration overwrites (+ the
-# calibration json that must stay coherent with it). Driver must be stopped.
-calib-backup = "python -m elrobot.calibration.backup"
-calib-restore = "python -m elrobot.calibration.backup --restore"
 
 # ── visualization only — no hardware ───────────────────────────────────
 
-# web cockpit — browser UI on http://<host>:8080 (LAN only, do not port-forward).
-# Regenerates the viz URDF first, same as view/m3-arm/jog: that file is
-# gitignored, so without this a fresh clone serves /urdf as a 500 and the
-# 3D panel stays empty.
-web = "python -m elrobot.tools.make_viz_urdf && python -m elrobot.web.server"
 # URDF in rviz2 with joint sliders
 view = "python -m elrobot.tools.make_viz_urdf && ros2 launch launch/view.launch.py"
 # phone (ZIG SIM PRO -> UDP :50000) drives the model in rviz2

@@ -22,12 +22,10 @@ import json
 import time
 from pathlib import Path
 
-from lerobot.motors import MotorCalibration
-from lerobot.motors.feetech import OperatingMode
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode
+from lerobot.motors.feetech import FeetechMotorsBus, OperatingMode
 
-from elrobot.calibration import steps
-from elrobot.calibration.steps import gate_ranges, write_homing
-
+MODEL = "sts3215"
 TICKS_PER_RAD = 651.9  # STS3215 direct drive, 4096 ticks/rev
 
 # Joints 5 and 7 sweep 336 deg / 340 deg — near a full revolution, so a
@@ -52,21 +50,23 @@ URDF_RANGE_RAD = {
 SANE_TOLERANCE = 0.20  # recorded span within +/-20% of URDF expectation
 
 
+def build_bus(port: str) -> FeetechMotorsBus:
+    motors = {
+        f"rev_motor_{i:02d}": Motor(i, MODEL, MotorNormMode.RANGE_M100_100)
+        for i in range(1, 9)
+    }
+    return FeetechMotorsBus(port=port, motors=motors, calibration=None)
+
+
 def check_ranges(mins: dict, maxes: dict) -> bool:
     """M1a gate: 'all 8 motors calibrated, ranges sane'.
 
     Catches the common failure — a joint not swept far enough, which yields a
-    plausible-looking calibration that quietly breaks IK later. The actual
-    +/-20% span-vs-URDF math is steps.gate_ranges; this wraps it with the
-    full-turn/gripper special cases and the CLI's live table printing.
+    plausible-looking calibration that quietly breaks IK later.
     """
     print("\n=== range check ===")
     print(f"{'MOTOR':<14} {'SPAN':>6} {'EXPECTED':>9} {'DIFF':>7}  STATUS")
     ok = True
-    urdf_motors = {m: mins[m] for m in mins
-                   if m not in FULL_TURN_MOTORS and m in URDF_RANGE_RAD}
-    gated = {g["name"]: g for g in gate_ranges(
-        {m: (mins[m], maxes[m]) for m in urdf_motors}, URDF_RANGE_RAD)}
     for motor in sorted(mins):
         span = maxes[motor] - mins[motor]
         if motor in FULL_TURN_MOTORS:
@@ -79,10 +79,11 @@ def check_ranges(mins: dict, maxes: dict) -> bool:
                 ok = False
             continue
         expected = URDF_RANGE_RAD[motor] * TICKS_PER_RAD
-        g = gated[motor]
-        ok = ok and g["ok"]
-        print(f"{motor:<14} {span:>6} {expected:>9.0f} {g['span_pct']:>+6.0%}  "
-              f"{'ok' if g['ok'] else 'SUSPECT — sweep further?'}")
+        diff = (span - expected) / expected
+        good = abs(diff) <= SANE_TOLERANCE
+        ok = ok and good
+        print(f"{motor:<14} {span:>6} {expected:>9.0f} {diff:>+6.0%}  "
+              f"{'ok' if good else 'SUSPECT — sweep further?'}")
     return ok
 
 
@@ -95,7 +96,7 @@ def main() -> int:
     print(__doc__)
     input("Arm resting low / supported? Torque will be disabled. ENTER to start...")
 
-    bus = steps.build_bus(args.port)
+    bus = build_bus(args.port)
     bus.connect(handshake=True)
     print(f"connected to {args.port}")
 
@@ -112,7 +113,7 @@ def main() -> int:
         print("Park the arm in a relaxed posture with NO joint near a hard stop")
         print("(~20 deg of clearance at each end is plenty — do not measure).")
         input("ENTER when parked...")
-        homing_offsets = write_homing(bus)   # THE EEPROM write
+        homing_offsets = bus.set_half_turn_homings()
         print("homing offsets written to EEPROM\n")
 
         sweep = [m for m in bus.motors if m not in FULL_TURN_MOTORS]

@@ -18,7 +18,21 @@ import argparse
 import statistics
 import time
 
-from elrobot.calibration import steps
+from lerobot.motors import Motor, MotorNormMode
+from lerobot.motors.feetech import FeetechMotorsBus
+
+# 7 arm joints + gripper, per the URDF (rev_motor_01..08) -> servo IDs 1..8
+MOTOR_IDS = range(1, 9)
+MODEL = "sts3215"
+
+
+def build_bus(port: str) -> FeetechMotorsBus:
+    motors = {
+        f"rev_motor_{i:02d}": Motor(i, MODEL, MotorNormMode.RANGE_M100_100)
+        for i in MOTOR_IDS
+    }
+    # calibration=None: M0 runs before M1a, reads stay raw
+    return FeetechMotorsBus(port=port, motors=motors, calibration=None)
 
 
 def summarize(label: str, samples: list[float], failures: int, n: int) -> float:
@@ -44,7 +58,7 @@ def main() -> int:
                     help="also time sync_write (no-op writes, torque off)")
     args = ap.parse_args()
 
-    bus = steps.build_bus(args.port)
+    bus = build_bus(args.port)
     print(f"connecting to {args.port} ...")
     # handshake=True pings every motor: catches a missing/misnumbered servo up front
     bus.connect(handshake=True)

@@ -20,8 +20,8 @@ from pathlib import Path
 
 import numpy as np
 import pinocchio as pin
-
-from elrobot.calibration import steps
+from lerobot.motors import Motor, MotorNormMode
+from lerobot.motors.feetech import FeetechMotorsBus
 
 TICKS_PER_RAD = 651.9
 ARM = [f"rev_motor_{i:02d}" for i in range(1, 8)]
@@ -58,7 +58,11 @@ def main():
         return data.oMf[fid].translation.copy()
 
     print(__doc__)
-    bus = steps.build_bus(args.port)
+    bus = FeetechMotorsBus(
+        port=args.port,
+        motors={n: Motor(i, "sts3215", MotorNormMode.RANGE_M100_100)
+                for i, n in enumerate(ARM + ["rev_motor_08"], start=1)},
+        calibration=None)
     bus.connect(handshake=True)
     try:
         bus.disable_torque()
